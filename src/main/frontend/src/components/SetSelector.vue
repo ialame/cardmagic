@@ -39,7 +39,11 @@
           v-for="set in filteredAndSortedSets"
           :key="set.code"
           class="set-item"
-          :class="{ 'selected': selectedSet?.code === set.code }"
+          :class="{
+            'selected': selectedSet?.code === set.code,
+            'has-cards': set.cardsCount > 0,
+            'synced': set.cardsSynced
+          }"
           @click="selectSet(set)"
         >
           <div class="set-info">
@@ -54,15 +58,78 @@
             <p v-if="set.block" class="set-block">
               📦 {{ set.block }}
             </p>
+
+            <!-- Statut des cartes -->
+            <div class="cards-status">
+              <span v-if="set.cardsCount > 0" class="cards-count">
+                🎴 {{ set.cardsCount }} cartes
+              </span>
+              <span v-else class="no-cards">
+                ❌ Aucune carte
+              </span>
+              <span v-if="set.cardsSynced" class="synced-badge">✅ Synchronisé</span>
+            </div>
           </div>
 
           <div class="set-actions">
+            <!-- Bouton Charger (MTG API + Scryfall fallback) -->
             <button
-              @click.stop="loadSet(set.code)"
-              :disabled="loading"
+              @click.stop="loadSetCards(set.code)"
+              :disabled="loadingCards[set.code]"
               class="load-button"
+              :title="'Charger les cartes de ' + set.name"
             >
-              {{ loading && selectedSet?.code === set.code ? 'Chargement...' : 'Charger' }}
+              <span v-if="loadingCards[set.code]">⏳</span>
+              <span v-else>📥</span>
+              {{ loadingCards[set.code] ? 'Chargement...' : 'Charger' }}
+            </button>
+
+            <!-- Bouton Scryfall spécifique -->
+            <button
+              @click.stop="loadFromScryfall(set.code)"
+              :disabled="loadingScryfall[set.code]"
+              class="scryfall-button"
+              :title="'Charger depuis Scryfall pour ' + set.name"
+            >
+              <span v-if="loadingScryfall[set.code]">🔮</span>
+              <span v-else>🔮</span>
+              {{ loadingScryfall[set.code] ? 'Scryfall...' : 'Scryfall' }}
+            </button>
+
+            <!-- Bouton Sync Complète -->
+            <button
+              @click.stop="syncCompleteFromScryfall(set.code)"
+              :disabled="syncingComplete[set.code]"
+              class="complete-button"
+              :title="'Synchronisation complète avec pagination pour ' + set.name"
+            >
+              <span v-if="syncingComplete[set.code]">🔄</span>
+              <span v-else>💯</span>
+              {{ syncingComplete[set.code] ? 'Sync...' : 'Complète' }}
+            </button>
+
+            <!-- Bouton Sauvegarder -->
+            <button
+              @click.stop="saveSetData(set.code)"
+              :disabled="savingCards[set.code] || set.cardsCount === 0"
+              class="save-button"
+              :title="'Sauvegarder en base et télécharger images de ' + set.name"
+            >
+              <span v-if="savingCards[set.code]">💾</span>
+              <span v-else>💽</span>
+              {{ savingCards[set.code] ? 'Sauvegarde...' : 'Sauvegarder' }}
+            </button>
+
+            <!-- Bouton Télécharger images -->
+            <button
+              @click.stop="downloadImages(set.code)"
+              :disabled="downloadingImages[set.code] || set.cardsCount === 0"
+              class="download-button"
+              :title="'Télécharger toutes les images de ' + set.name"
+            >
+              <span v-if="downloadingImages[set.code]">🖼️</span>
+              <span v-else">📸</span>
+              {{ downloadingImages[set.code] ? 'Télécharge...' : 'Images' }}
             </button>
           </div>
         </div>
@@ -90,6 +157,12 @@
           Suivant →
         </button>
       </div>
+
+      <!-- Statut des opérations -->
+      <div v-if="operationStatus" class="operation-status" :class="operationStatus.type">
+        <span>{{ operationStatus.message }}</span>
+        <button @click="operationStatus = null" class="close-status">×</button>
+      </div>
     </div>
   </div>
 </template>
@@ -97,7 +170,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useMtgStore } from '@/stores/mtgStore'
-import type { MtgSet } from '@/types/mtg'
+import axios from 'axios'
 
 const mtgStore = useMtgStore()
 
@@ -106,13 +179,23 @@ const showSelector = ref(false)
 const searchTerm = ref('')
 const selectedType = ref('')
 const sortBy = ref('releaseDate')
-const selectedSet = ref<MtgSet | null>(null)
+const selectedSet = ref<any>(null)
 const currentPage = ref(1)
 const itemsPerPage = 12
 
+// États de chargement par extension
+const loadingCards = ref<Record<string, boolean>>({})
+const loadingScryfall = ref<Record<string, boolean>>({})
+const syncingComplete = ref<Record<string, boolean>>({})
+const savingCards = ref<Record<string, boolean>>({})
+const downloadingImages = ref<Record<string, boolean>>({})
+
+// Statut des opérations
+const operationStatus = ref<{type: string, message: string} | null>(null)
+
 // Computed
 const loading = computed(() => mtgStore.loading)
-const allSets = computed(() => mtgStore.sets)
+const allSets = ref<any[]>([])
 
 const availableTypes = computed(() => {
   const types = new Set(allSets.value.map(set => set.type))
@@ -172,18 +255,201 @@ const toggleSelector = async () => {
   showSelector.value = !showSelector.value
 
   if (showSelector.value && allSets.value.length === 0) {
-    await mtgStore.fetchAllSetsOnly()
+    await loadAllSets()
   }
 }
 
-const selectSet = (set: MtgSet) => {
-  selectedSet.value = set
+const loadAllSets = async () => {
+  try {
+    console.log('🔍 Chargement de toutes les extensions...')
+    const response = await axios.get('/api/mtg/debug/all-sets')
+    allSets.value = response.data.data || []
+    console.log('✅ Extensions chargées:', allSets.value.length)
+  } catch (error) {
+    console.error('❌ Erreur chargement extensions:', error)
+    showOperationStatus('error', 'Erreur lors du chargement des extensions')
+  }
 }
 
-const loadSet = async (setCode: string) => {
-  selectedSet.value = allSets.value.find(s => s.code === setCode) || null
-  await mtgStore.fetchSetByCode(setCode)
-  showSelector.value = false
+const selectSet = (set: any) => {
+  selectedSet.value = set
+  console.log('🎯 Extension sélectionnée:', set.code)
+}
+
+const loadSetCards = async (setCode: string) => {
+  try {
+    loadingCards.value[setCode] = true
+    console.log('📥 Chargement des cartes pour:', setCode)
+
+    // Essayer d'abord MTG API, puis Scryfall en fallback
+    try {
+      await mtgStore.fetchSetByCode(setCode)
+      console.log('✅ Cartes chargées depuis MTG API')
+    } catch (mtgError) {
+      console.log('⚠️ MTG API échoué, essai avec Scryfall...')
+
+      // Fallback vers Scryfall
+      const response = await axios.post(`/api/scryfall/sync/${setCode}`)
+      if (response.data.success) {
+        console.log('✅ Synchronisation Scryfall démarrée')
+        // Attendre un peu puis recharger
+        setTimeout(async () => {
+          await mtgStore.fetchSetByCode(setCode)
+        }, 3000)
+      }
+    }
+
+    // Mettre à jour le statut de l'extension dans la liste
+    await refreshSetStatus(setCode)
+
+    showOperationStatus('success', `Cartes de ${setCode} chargées avec succès`)
+
+  } catch (error: any) {
+    console.error('❌ Erreur chargement cartes:', error)
+    showOperationStatus('error', `Erreur lors du chargement de ${setCode}`)
+  } finally {
+    loadingCards.value[setCode] = false
+  }
+}
+
+const loadFromScryfall = async (setCode: string) => {
+  try {
+    loadingScryfall.value[setCode] = true
+    console.log('🔮 Chargement depuis Scryfall pour:', setCode)
+
+    // Synchroniser depuis Scryfall
+    const response = await axios.post(`/api/scryfall/sync/${setCode}`)
+
+    if (response.data.success) {
+      showOperationStatus('success', `Synchronisation Scryfall démarrée pour ${setCode}`)
+
+      // Attendre un peu puis recharger les données
+      setTimeout(async () => {
+        await refreshSetStatus(setCode)
+        await mtgStore.fetchSetByCode(setCode)
+        showOperationStatus('success', `Cartes Scryfall chargées pour ${setCode}`)
+      }, 3000)
+    } else {
+      throw new Error(response.data.message)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur Scryfall:', error)
+    showOperationStatus('error', `Erreur Scryfall pour ${setCode}`)
+  } finally {
+    loadingScryfall.value[setCode] = false
+  }
+}
+
+const saveSetData = async (setCode: string) => {
+  try {
+    savingCards.value[setCode] = true
+    console.log('💾 Sauvegarde en base pour:', setCode)
+
+    // Forcer la synchronisation en base
+    const response = await axios.post(`/api/mtg/admin/sync-set/${setCode}`)
+
+    if (response.data.success) {
+      await refreshSetStatus(setCode)
+      showOperationStatus('success', `Extension ${setCode} sauvegardée en base`)
+    } else {
+      throw new Error(response.data.message)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur sauvegarde:', error)
+    showOperationStatus('error', `Erreur lors de la sauvegarde de ${setCode}`)
+  } finally {
+    savingCards.value[setCode] = false
+  }
+}
+
+const syncCompleteFromScryfall = async (setCode: string) => {
+  try {
+    syncingComplete.value[setCode] = true
+    console.log('💯 Synchronisation complète depuis Scryfall pour:', setCode)
+
+    // Synchronisation complète avec pagination
+    const response = await axios.post(`/api/scryfall/sync-complete/${setCode}`)
+
+    if (response.data.success) {
+      showOperationStatus('success', `Synchronisation complète démarrée pour ${setCode}`)
+
+      // Attendre plus longtemps pour la sync complète (pagination)
+      setTimeout(async () => {
+        await refreshSetStatus(setCode)
+        await mtgStore.fetchSetByCode(setCode)
+        showOperationStatus('success', `Toutes les cartes récupérées pour ${setCode}`)
+      }, 10000) // 10 secondes pour la pagination
+    } else {
+      throw new Error(response.data.message)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur sync complète:', error)
+    showOperationStatus('error', `Erreur sync complète pour ${setCode}`)
+  } finally {
+    syncingComplete.value[setCode] = false
+  }
+}
+
+const downloadImages = async (setCode: string) => {
+  try {
+    downloadingImages.value[setCode] = true
+    console.log('📸 Téléchargement des images pour:', setCode)
+
+    // Déclencher le téléchargement des images
+    const response = await axios.post(`/api/images/download-set/${setCode}`)
+
+    if (response.status === 202) { // Accepted
+      showOperationStatus('success', `Téléchargement des images de ${setCode} démarré`)
+
+      // Optionnel : surveiller le progrès
+      setTimeout(() => checkDownloadProgress(setCode), 5000)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur téléchargement images:', error)
+    showOperationStatus('error', `Erreur lors du téléchargement des images de ${setCode}`)
+  } finally {
+    downloadingImages.value[setCode] = false
+  }
+}
+
+const checkDownloadProgress = async (setCode: string) => {
+  try {
+    const response = await axios.get('/api/images/stats')
+    console.log('📊 Statistiques téléchargement:', response.data)
+  } catch (error) {
+    console.error('❌ Erreur vérification progrès:', error)
+  }
+}
+
+const refreshSetStatus = async (setCode: string) => {
+  try {
+    const response = await axios.get(`/api/mtg/sets/${setCode}/with-cards`)
+    if (response.data.success) {
+      // Mettre à jour l'extension dans la liste
+      const setIndex = allSets.value.findIndex(s => s.code === setCode)
+      if (setIndex !== -1) {
+        allSets.value[setIndex] = {
+          ...allSets.value[setIndex],
+          cardsCount: response.data.data.totalCards,
+          cardsSynced: response.data.data.cardsSynced
+        }
+      }
+    }
+  } catch (error) {
+    console.error('❌ Erreur refresh statut:', error)
+  }
+}
+
+const showOperationStatus = (type: string, message: string) => {
+  operationStatus.value = { type, message }
+  // Auto-fermer après 5 secondes
+  setTimeout(() => {
+    operationStatus.value = null
+  }, 5000)
 }
 
 const formatDate = (dateString: string): string => {
@@ -196,7 +462,7 @@ const formatDate = (dateString: string): string => {
 
 // Lifecycle
 onMounted(() => {
-  console.log('🎛️ SetSelector monté')
+  console.log('🎛️ SetSelector monté avec fonctionnalités avancées')
 })
 </script>
 
@@ -287,7 +553,7 @@ onMounted(() => {
 
 .sets-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
@@ -300,8 +566,8 @@ onMounted(() => {
   cursor: pointer;
   transition: all 0.3s ease;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 .set-item:hover {
@@ -315,6 +581,14 @@ onMounted(() => {
   background: rgba(255, 215, 0, 0.1);
 }
 
+.set-item.has-cards {
+  border-left: 4px solid #27ae60;
+}
+
+.set-item.synced {
+  border-right: 4px solid #3498db;
+}
+
 .set-info {
   flex: 1;
 }
@@ -323,6 +597,7 @@ onMounted(() => {
   margin: 0 0 0.5rem 0;
   color: #ffd700;
   font-size: 1.1rem;
+  line-height: 1.3;
 }
 
 .set-details {
@@ -330,6 +605,7 @@ onMounted(() => {
   gap: 0.5rem;
   margin: 0.25rem 0;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .set-code {
@@ -362,30 +638,144 @@ onMounted(() => {
   opacity: 0.9;
 }
 
-.set-actions {
-  margin-left: 1rem;
+.cards-status {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
 }
 
-.load-button {
-  padding: 0.5rem 1rem;
-  background: linear-gradient(45deg, #ff6b6b, #ee5a24);
-  color: white;
+.cards-count {
+  background: rgba(39, 174, 96, 0.2);
+  color: #27ae60;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.no-cards {
+  background: rgba(231, 76, 60, 0.2);
+  color: #e74c3c;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.synced-badge {
+  background: rgba(52, 152, 219, 0.2);
+  color: #3498db;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.set-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.load-button,
+.scryfall-button,
+.complete-button,
+.save-button,
+.download-button {
+  flex: 1;
+  min-width: 70px;
+  padding: 0.5rem;
   border: none;
   border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
+  font-size: 0.75rem;
   transition: all 0.3s ease;
-  min-width: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
 }
 
-.load-button:hover:not(:disabled) {
+.load-button {
+  background: linear-gradient(45deg, #3498db, #2980b9);
+  color: white;
+}
+
+.scryfall-button {
+  background: linear-gradient(45deg, #9b59b6, #8e44ad);
+  color: white;
+}
+
+.complete-button {
+  background: linear-gradient(45deg, #e67e22, #d35400);
+  color: white;
+}
+
+.save-button {
+  background: linear-gradient(45deg, #27ae60, #229954);
+  color: white;
+}
+
+.download-button {
+  background: linear-gradient(45deg, #f39c12, #e67e22);
+  color: white;
+}
+
+.load-button:hover:not(:disabled),
+.scryfall-button:hover:not(:disabled),
+.complete-button:hover:not(:disabled),
+.save-button:hover:not(:disabled),
+.download-button:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(238, 90, 36, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
-.load-button:disabled {
+.load-button:disabled,
+.scryfall-button:disabled,
+.complete-button:disabled,
+.save-button:disabled,
+.download-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.operation-status {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  animation: slideIn 0.3s ease-out;
+}
+
+.operation-status.success {
+  background: rgba(39, 174, 96, 0.2);
+  border: 1px solid #27ae60;
+  color: #27ae60;
+}
+
+.operation-status.error {
+  background: rgba(231, 76, 60, 0.2);
+  border: 1px solid #e74c3c;
+  color: #e74c3c;
+}
+
+.close-status {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .pagination {
@@ -431,24 +821,31 @@ onMounted(() => {
   }
 }
 
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 @media (max-width: 768px) {
   .sets-grid {
     grid-template-columns: 1fr;
   }
 
-  .set-item {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
   .set-actions {
-    margin-left: 0;
-    align-self: stretch;
+    flex-direction: column;
   }
 
-  .load-button {
-    width: 100%;
+  .load-button,
+  .scryfall-button,
+  .save-button,
+  .download-button {
+    min-width: auto;
   }
 
   .filters {

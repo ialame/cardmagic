@@ -1,5 +1,7 @@
 package com.pcagrad.magic.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pcagrad.magic.dto.ApiResponse;
 import com.pcagrad.magic.entity.CardEntity;
 import com.pcagrad.magic.entity.SetEntity;
@@ -7,13 +9,16 @@ import com.pcagrad.magic.model.MtgCard;
 import com.pcagrad.magic.model.MtgSet;
 import com.pcagrad.magic.repository.CardRepository;
 import com.pcagrad.magic.repository.SetRepository;
+import com.pcagrad.magic.service.ImageDownloadService;
 import com.pcagrad.magic.service.MtgService;
+import com.pcagrad.magic.service.ScryfallService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import java.util.Map;
 import java.util.HashMap;
@@ -39,6 +44,13 @@ public class MtgController {
 
     @Autowired
     private CardRepository cardRepository;
+
+    @Autowired
+    private ImageDownloadService imageDownloadService;
+
+    @Autowired
+
+    private ScryfallService scryfallService;
 
     @GetMapping("/sets")
     public Mono<ResponseEntity<ApiResponse<List<MtgSet>>>> getAllSets() {
@@ -408,6 +420,369 @@ public class MtgController {
             logger.error("❌ Erreur lors de la correction : {}", e.getMessage());
             return ResponseEntity.badRequest()
                     .body(ApiResponse.error("Erreur lors de la correction : " + e.getMessage()));
+        }
+    }
+
+    // Ajoutez ces méthodes dans votre MtgController existant
+
+    /**
+     * Endpoint de debug pour voir toutes les extensions disponibles
+     */
+    @GetMapping("/debug/all-sets")
+    public ResponseEntity<ApiResponse<List<Object>>> debugAllSets() {
+        try {
+            List<SetEntity> allSets = setRepository.findAll();
+
+            List<Object> result = allSets.stream()
+                    .map(set -> {
+                        Map<String, Object> setInfo = new HashMap<>();
+                        setInfo.put("code", set.getCode());
+                        setInfo.put("name", set.getName());
+                        setInfo.put("type", set.getType());
+                        setInfo.put("releaseDate", set.getReleaseDate());
+                        setInfo.put("cardsSynced", set.getCardsSynced());
+                        setInfo.put("cardsCount", cardRepository.countBySetCode(set.getCode()));
+                        return setInfo;
+                    })
+                    .sorted((a, b) -> {
+                        LocalDate dateA = (LocalDate) a.get("releaseDate");
+                        LocalDate dateB = (LocalDate) b.get("releaseDate");
+                        if (dateA == null && dateB == null) return 0;
+                        if (dateA == null) return 1;
+                        if (dateB == null) return -1;
+                        return dateB.compareTo(dateA); // Plus récent en premier
+                    })
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(ApiResponse.success(result, "Debug - toutes les extensions"));
+        } catch (Exception e) {
+            logger.error("❌ Erreur debug all sets : {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Endpoint pour tester quelle est la dernière extension détectée
+     */
+    @GetMapping("/debug/latest-set-detection")
+    public Mono<ResponseEntity<ApiResponse<Map<String, Object>>>> debugLatestSetDetection() {
+        return mtgService.getLatestSet()
+                .map(latestSet -> {
+                    if (latestSet == null) {
+                        Map<String, Object> debug = new HashMap<>();
+                        debug.put("error", "Aucune dernière extension trouvée");
+                        debug.put("suggestion", "Vérifier la logique de détection");
+
+                        // Ajouter des infos de debug
+                        List<SetEntity> recentSets = setRepository.findLatestSets();
+                        debug.put("setsInDb", recentSets.size());
+                        debug.put("firstFiveSets", recentSets.stream()
+                                .limit(5)
+                                .map(set -> set.getCode() + " - " + set.getName() + " (" + set.getReleaseDate() + ")")
+                                .collect(Collectors.toList()));
+
+                        return ResponseEntity.ok(ApiResponse.success(debug, "Debug - aucune extension trouvée"));
+                    }
+
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("code", latestSet.code());
+                    result.put("name", latestSet.name());
+                    result.put("type", latestSet.type());
+                    result.put("releaseDate", latestSet.releaseDate());
+
+                    // Vérifier si elle a des cartes
+                    long cardCount = cardRepository.countBySetCode(latestSet.code());
+                    result.put("cardsCount", cardCount);
+                    result.put("hasSyncedCards", cardCount > 0);
+
+                    return ResponseEntity.ok(ApiResponse.success(result, "Dernière extension détectée"));
+                }).onErrorReturn(ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Erreur lors de la détection")));
+    }
+
+    /**
+     * Endpoint pour forcer le rechargement d'une extension spécifique depuis l'API
+     */
+    @PostMapping("/debug/force-reload-set/{setCode}")
+    public ResponseEntity<ApiResponse<String>> forceReloadSet(@PathVariable String setCode) {
+        try {
+            logger.info("🔄 Rechargement forcé de l'extension : {}", setCode);
+
+            // Supprimer les cartes existantes pour cette extension
+            List<CardEntity> existingCards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+            if (!existingCards.isEmpty()) {
+                cardRepository.deleteAll(existingCards);
+                logger.info("🗑️ {} cartes supprimées pour {}", existingCards.size(), setCode);
+            }
+
+            // Marquer l'extension comme non synchronisée
+            setRepository.findByCode(setCode).ifPresent(set -> {
+                set.setCardsSynced(false);
+                set.setCardsCount(0);
+                setRepository.save(set);
+            });
+
+            // Déclencher la synchronisation
+            mtgService.forceSyncSet(setCode).subscribe(
+                    set -> logger.info("✅ Rechargement terminé pour {}", setCode),
+                    error -> logger.error("❌ Erreur rechargement {} : {}", setCode, error.getMessage())
+            );
+
+            return ResponseEntity.accepted()
+                    .body(ApiResponse.success("Rechargement démarré pour : " + setCode));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur force reload : {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Endpoint pour ajouter manuellement les extensions 2024-2025 populaires
+     */
+    @PostMapping("/debug/add-recent-sets")
+    public ResponseEntity<ApiResponse<String>> addRecentSets() {
+        try {
+            logger.info("🎮 Ajout des extensions récentes 2024-2025");
+            int addedCount = 0;
+
+            // Extensions récentes populaires avec leurs vraies dates
+            Map<String, Object[]> recentSets = Map.of(
+                    "BLB", new Object[]{"Bloomburrow", "expansion", LocalDate.of(2024, 8, 2)},
+                    "MH3", new Object[]{"Modern Horizons 3", "draft_innovation", LocalDate.of(2024, 6, 14)},
+                    "OTJ", new Object[]{"Outlaws of Thunder Junction", "expansion", LocalDate.of(2024, 4, 19)},
+                    "MKM", new Object[]{"Murders at Karlov Manor", "expansion", LocalDate.of(2024, 2, 9)},
+                    "LCI", new Object[]{"The Lost Caverns of Ixalan", "expansion", LocalDate.of(2023, 11, 17)},
+                    "WOE", new Object[]{"Wilds of Eldraine", "expansion", LocalDate.of(2023, 9, 8)},
+                    "LTR", new Object[]{"The Lord of the Rings: Tales of Middle-earth", "expansion", LocalDate.of(2023, 6, 23)}
+            );
+
+            for (Map.Entry<String, Object[]> entry : recentSets.entrySet()) {
+                String code = entry.getKey();
+                Object[] data = entry.getValue();
+
+                Optional<SetEntity> existing = setRepository.findByCode(code);
+                if (existing.isEmpty()) {
+                    SetEntity set = new SetEntity();
+                    set.setCode(code);
+                    set.setName((String) data[0]);
+                    set.setType((String) data[1]);
+                    set.setReleaseDate((LocalDate) data[2]);
+                    set.setCardsSynced(false);
+
+                    setRepository.save(set);
+                    addedCount++;
+                    logger.info("✅ Extension ajoutée : {} - {}", code, data[0]);
+                } else {
+                    // Mettre à jour la date si nécessaire
+                    SetEntity existing_set = existing.get();
+                    existing_set.setReleaseDate((LocalDate) data[2]);
+                    setRepository.save(existing_set);
+                    logger.info("🔄 Extension mise à jour : {} - {}", code, data[0]);
+                }
+            }
+
+            return ResponseEntity.ok(ApiResponse.success(
+                    addedCount + " extensions récentes ajoutées/mises à jour",
+                    "Extensions 2023-2024 ajoutées"
+            ));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur ajout extensions récentes : {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
+        }
+    }
+
+    // Ajoutez ces endpoints dans votre MtgController existant
+
+    /**
+     * Endpoint pour sauvegarder complètement une extension (base + images)
+     */
+    @PostMapping("/admin/save-complete/{setCode}")
+    public ResponseEntity<ApiResponse<String>> saveCompleteSet(@PathVariable String setCode) {
+        try {
+            logger.info("💾 Sauvegarde complète de l'extension : {}", setCode);
+
+            // 1. Synchroniser les cartes en base
+            CompletableFuture<Void> syncFuture = CompletableFuture.runAsync(() -> {
+                try {
+                    mtgService.forceSyncSet(setCode).subscribe(
+                            set -> {
+                                if (set != null && set.cards() != null) {
+                                    logger.info("✅ {} cartes synchronisées pour {}", set.cards().size(), setCode);
+                                }
+                            },
+                            error -> logger.error("❌ Erreur sync cartes {} : {}", setCode, error.getMessage())
+                    );
+                } catch (Exception e) {
+                    logger.error("❌ Erreur sync {} : {}", setCode, e.getMessage());
+                }
+            });
+
+            // 2. Attendre un peu puis déclencher le téléchargement des images
+            CompletableFuture<Void> imagesFuture = syncFuture.thenRunAsync(() -> {
+                try {
+                    // Attendre 2 secondes que la sync soit terminée
+                    Thread.sleep(2000);
+
+                    // Déclencher le téléchargement des images
+                    imageDownloadService.downloadImagesForSet(setCode)
+                            .thenAccept(count -> {
+                                logger.info("🖼️ {} images téléchargées pour {}", count, setCode);
+                            });
+
+                } catch (Exception e) {
+                    logger.error("❌ Erreur téléchargement images {} : {}", setCode, e.getMessage());
+                }
+            });
+
+            return ResponseEntity.accepted()
+                    .body(ApiResponse.success("Sauvegarde complète démarrée pour : " + setCode,
+                            "Les cartes seront synchronisées en base et les images téléchargées"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sauvegarde complète {} : {}", setCode, e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur lors de la sauvegarde complète : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Endpoint pour obtenir le statut détaillé d'une extension
+     */
+    @GetMapping("/admin/set-status/{setCode}")
+    public ResponseEntity<ApiResponse<Object>> getSetStatus(@PathVariable String setCode) {
+        try {
+            Optional<SetEntity> setEntity = setRepository.findByCode(setCode);
+            if (setEntity.isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
+
+            SetEntity set = setEntity.get();
+            List<CardEntity> cards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+
+            // Statistiques des images
+            long totalCards = cards.size();
+            long downloadedImages = cards.stream()
+                    .mapToLong(card -> (card.getImageDownloaded() != null && card.getImageDownloaded()) ? 1 : 0)
+                    .sum();
+
+            // Statistiques par rareté
+            Map<String, Long> rarityStats = cards.stream()
+                    .collect(Collectors.groupingBy(
+                            card -> card.getRarity() != null ? card.getRarity() : "Unknown",
+                            Collectors.counting()
+                    ));
+
+            Map<String, Object> status = new HashMap<>();
+            status.put("code", set.getCode());
+            status.put("name", set.getName());
+            status.put("type", set.getType());
+            status.put("releaseDate", set.getReleaseDate());
+            status.put("cardsSynced", set.getCardsSynced());
+            status.put("cardsCount", totalCards);
+            status.put("imagesDownloaded", downloadedImages);
+            status.put("imagesPercentage", totalCards > 0 ? (double) downloadedImages / totalCards * 100 : 0);
+            status.put("rarityStats", rarityStats);
+            status.put("lastSyncAt", set.getLastSyncAt());
+
+            return ResponseEntity.ok(ApiResponse.success(status, "Statut de l'extension " + setCode));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur statut extension {} : {}", setCode, e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Endpoint pour forcer la synchronisation en temps réel (avec WebSocket si disponible)
+     */
+    @PostMapping("/admin/force-sync-realtime/{setCode}")
+    public ResponseEntity<ApiResponse<String>> forceSyncRealtime(@PathVariable String setCode) {
+        try {
+            logger.info("⚡ Synchronisation temps réel pour : {}", setCode);
+
+            // Nettoyer les anciennes données
+            List<CardEntity> existingCards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+            if (!existingCards.isEmpty()) {
+                cardRepository.deleteAll(existingCards);
+                logger.info("🗑️ {} anciennes cartes supprimées", existingCards.size());
+            }
+
+            // Marquer comme non synchronisé
+            setRepository.findByCode(setCode).ifPresent(set -> {
+                set.setCardsSynced(false);
+                set.setCardsCount(0);
+                setRepository.save(set);
+            });
+
+            // Déclencher la synchronisation
+            mtgService.forceSyncSet(setCode)
+                    .doOnNext(set -> {
+                        if (set != null && set.cards() != null) {
+                            logger.info("⚡ Sync temps réel terminée : {} cartes pour {}",
+                                    set.cards().size(), setCode);
+                        }
+                    })
+                    .subscribe();
+
+            return ResponseEntity.accepted()
+                    .body(ApiResponse.success("Synchronisation temps réel démarrée pour : " + setCode));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sync temps réel {} : {}", setCode, e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Endpoint pour obtenir les statistiques de toutes les extensions
+     */
+    @GetMapping("/admin/all-sets-status")
+    public ResponseEntity<ApiResponse<List<Object>>> getAllSetsStatus() {
+        try {
+            List<SetEntity> allSets = setRepository.findAll();
+
+            List<Object> result = allSets.stream()
+                    .map(set -> {
+                        long cardCount = cardRepository.countBySetCode(set.getCode());
+                        long imageCount = cardRepository.findBySetCodeOrderByNameAsc(set.getCode())
+                                .stream()
+                                .mapToLong(card -> (card.getImageDownloaded() != null && card.getImageDownloaded()) ? 1 : 0)
+                                .sum();
+
+                        Map<String, Object> setInfo = new HashMap<>();
+                        setInfo.put("code", set.getCode());
+                        setInfo.put("name", set.getName());
+                        setInfo.put("type", set.getType());
+                        setInfo.put("releaseDate", set.getReleaseDate());
+                        setInfo.put("cardsSynced", set.getCardsSynced());
+                        setInfo.put("cardsCount", cardCount);
+                        setInfo.put("imagesCount", imageCount);
+                        setInfo.put("completionPercentage", cardCount > 0 ? (double) imageCount / cardCount * 100 : 0);
+                        return setInfo;
+                    })
+                    .sorted((a, b) -> {
+                        LocalDate dateA = (LocalDate) a.get("releaseDate");
+                        LocalDate dateB = (LocalDate) b.get("releaseDate");
+                        if (dateA == null && dateB == null) return 0;
+                        if (dateA == null) return 1;
+                        if (dateB == null) return -1;
+                        return dateB.compareTo(dateA); // Plus récent en premier
+                    })
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(ApiResponse.success(result, "Statut de toutes les extensions"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur statut toutes extensions : {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
         }
     }
 
