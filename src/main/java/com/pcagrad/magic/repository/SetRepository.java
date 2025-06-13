@@ -16,17 +16,12 @@ public interface SetRepository extends JpaRepository<SetEntity, String> {
     // Rechercher par nom (partiel)
     List<SetEntity> findByNameContainingIgnoreCaseOrderByReleaseDateDesc(String name);
 
-    // Rechercher par type
-    List<SetEntity> findByTypeOrderByReleaseDateDesc(String type);
 
     // Rechercher par bloc
     List<SetEntity> findByBlockOrderByReleaseDateDesc(String block);
 
     // Extensions avec cartes synchronisées
     List<SetEntity> findByCardsSyncedTrueOrderByReleaseDateDesc();
-
-    // Extensions sans cartes synchronisées
-    List<SetEntity> findByCardsSyncedFalseOrderByReleaseDateDesc();
 
     // Extension la plus récente
     @Query("SELECT s FROM SetEntity s WHERE s.releaseDate IS NOT NULL AND s.type != 'promo' AND s.type != 'token' ORDER BY s.releaseDate DESC")
@@ -54,8 +49,6 @@ public interface SetRepository extends JpaRepository<SetEntity, String> {
     @Query("SELECT s.type, COUNT(s) FROM SetEntity s GROUP BY s.type ORDER BY COUNT(s) DESC")
     List<Object[]> countByType();
 
-    @Query("SELECT COUNT(s) FROM SetEntity s WHERE s.cardsSynced = true")
-    long countSyncedSets();
 
     @Query("SELECT SUM(s.cardsCount) FROM SetEntity s WHERE s.cardsCount IS NOT NULL")
     Long getTotalCardsCount();
@@ -65,4 +58,18 @@ public interface SetRepository extends JpaRepository<SetEntity, String> {
 
     // Vérifier si une extension existe par code
     boolean existsByCode(String code);
+    // Méthodes existantes...
+    List<SetEntity> findByCardsSyncedFalseOrderByReleaseDateDesc();
+
+    @Query("SELECT COUNT(s) FROM SetEntity s WHERE s.cardsSynced = true")
+    long countSyncedSets();
+
+    // AJOUTEZ CETTE MÉTHODE :
+    Optional<SetEntity> findByCode(String code);
+
+    // Optionnel : autres méthodes utiles
+    Optional<SetEntity> findByName(String name);
+    List<SetEntity> findByTypeOrderByReleaseDateDesc(String type);
+    @Query("SELECT s FROM SetEntity s WHERE YEAR(s.releaseDate) = :year ORDER BY s.releaseDate DESC")
+    List<SetEntity> findByReleaseDateYear(@Param("year") int year);
 }

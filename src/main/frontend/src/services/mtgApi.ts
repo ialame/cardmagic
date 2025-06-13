@@ -3,7 +3,7 @@ import axios from 'axios'
 import type { MtgSet, MtgCard, ApiResponse } from '@/types/mtg'
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/mtg',
+  baseURL: '/api/mtg',
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json'

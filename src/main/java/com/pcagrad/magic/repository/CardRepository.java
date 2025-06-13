@@ -13,8 +13,6 @@ import java.util.List;
 @Repository
 public interface CardRepository extends JpaRepository<CardEntity, String> {
 
-    // Rechercher par extension
-    List<CardEntity> findBySetCodeOrderByNameAsc(String setCode);
 
     // Rechercher par nom (partiel)
     List<CardEntity> findByNameContainingIgnoreCaseOrderByNameAsc(String name);
@@ -44,9 +42,6 @@ public interface CardRepository extends JpaRepository<CardEntity, String> {
             Pageable pageable
     );
 
-    // Compter les cartes par extension
-    long countBySetCode(String setCode);
-
     // Compter les cartes par rareté dans une extension
     @Query("SELECT c.rarity, COUNT(c) FROM CardEntity c WHERE c.setCode = :setCode GROUP BY c.rarity")
     List<Object[]> countByRarityInSet(@Param("setCode") String setCode);
@@ -69,4 +64,11 @@ public interface CardRepository extends JpaRepository<CardEntity, String> {
 
     // Cartes les plus récentes
     List<CardEntity> findTop10ByOrderByCreatedAtDesc();
+
+    // AJOUTEZ CETTE MÉTHODE :
+    long countBySetCode(String setCode);
+
+    // Si cette méthode n'existe pas déjà, ajoutez-la aussi :
+    List<CardEntity> findBySetCodeOrderByNameAsc(String setCode);
+
 }

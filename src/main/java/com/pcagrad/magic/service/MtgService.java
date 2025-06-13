@@ -401,4 +401,6 @@ public class MtgService {
                 entity.getLocalImagePath() != null ? "/api/images/" + entity.getId() : entity.getOriginalImageUrl()
         );
     }
+
+
 }
