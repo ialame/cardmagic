@@ -19,6 +19,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 @Service
@@ -103,31 +104,58 @@ public class CardPersistenceService {
         });
     }
 
-    /**
-     * NOUVELLE MÉTHODE - Sauvegarde ou met à jour une carte avec gestion UUID
-     */
+    // Modifiez la méthode saveOrUpdateCardWithUUID dans CardPersistenceService.java
+
     public CardEntity saveOrUpdateCardWithUUID(MtgCard mtgCard, String setCode) {
         if (mtgCard.id() == null || mtgCard.id().isEmpty()) {
             logger.warn("⚠️ Carte sans ID externe ignorée : {}", mtgCard.name());
             return null;
         }
 
-        // Chercher par externalId et setCode pour éviter les doublons
+        // CORRECTION: Chercher par externalId ET setCode pour éviter les doublons
         Optional<CardEntity> existingCard = cardRepository.findByExternalIdAndSetCode(mtgCard.id(), setCode);
         CardEntity cardEntity;
 
         if (existingCard.isPresent()) {
             cardEntity = existingCard.get();
+
+            // IMPORTANT: Ne pas changer l'UUID, juste mettre à jour les autres champs
+            UUID originalId = cardEntity.getId();
             updateCardEntity(cardEntity, mtgCard);
-            logger.debug("🔄 Mise à jour carte existante : {} (UUID: {})", mtgCard.name(), cardEntity.getId());
+            cardEntity.setId(originalId); // Forcer le même UUID
+
+            logger.debug("🔄 Mise à jour carte existante : {} (UUID préservé: {})",
+                    mtgCard.name(), cardEntity.getId());
         } else {
-            cardEntity = createCardEntityWithUUID(mtgCard, setCode);
-            logger.debug("✨ Nouvelle carte créée : {} (External ID: {})", mtgCard.name(), mtgCard.id());
+            // Vérifier s'il y a une carte avec le même nom dans le même set (doublon potentiel)
+            List<CardEntity> sameName = cardRepository.findByNameAndSetCode(mtgCard.name(), setCode);
+            if (!sameName.isEmpty()) {
+                // Utiliser la carte existante et mettre à jour son externalId
+                cardEntity = sameName.get(0);
+                cardEntity.setExternalId(mtgCard.id());
+                updateCardEntity(cardEntity, mtgCard);
+                logger.debug("🔄 Carte existante trouvée par nom : {} (UUID préservé)", mtgCard.name());
+            } else {
+                // Créer une nouvelle carte
+                cardEntity = createCardEntityWithUUID(mtgCard, setCode);
+                logger.debug("✨ Nouvelle carte créée : {} (External ID: {})", mtgCard.name(), mtgCard.id());
+            }
         }
 
-        return cardRepository.save(cardEntity);
+        try {
+            return cardRepository.save(cardEntity);
+        } catch (Exception e) {
+            logger.error("❌ Erreur sauvegarde carte {} : {}", mtgCard.name(), e.getMessage());
+            // En cas d'erreur UUID, essayer de créer une nouvelle carte
+            try {
+                CardEntity newCard = createCardEntityWithUUID(mtgCard, setCode);
+                return cardRepository.save(newCard);
+            } catch (Exception e2) {
+                logger.error("❌ Impossible de sauvegarder {} : {}", mtgCard.name(), e2.getMessage());
+                return null;
+            }
+        }
     }
-
     /**
      * Méthode pour la compatibilité avec l'ancien code
      */

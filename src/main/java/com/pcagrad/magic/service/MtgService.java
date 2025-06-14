@@ -62,7 +62,7 @@ public class MtgService {
     );
 
     /**
-     * Récupère toutes les extensions (hybride: DB + API)
+     * Récupère toutes les extensions (SANS sauvegarde automatique)
      */
     public Mono<List<MtgSet>> getAllSets() {
         logger.debug("🔍 Récupération de toutes les extensions");
@@ -78,12 +78,12 @@ public class MtgService {
             return Mono.just(mtgSets);
         }
 
-        // Sinon récupérer depuis l'API et sauvegarder
-        logger.info("🌐 Récupération des extensions depuis l'API externe");
+        // Sinon récupérer depuis l'API SANS SAUVEGARDER
+        logger.info("🌐 Récupération des extensions depuis l'API externe (sans sauvegarde)");
         return fetchSetsFromApi()
                 .doOnNext(sets -> {
-                    logger.info("💾 Sauvegarde de {} extensions en base", sets.size());
-                    sets.forEach(persistenceService::saveOrUpdateSet);
+                    logger.info("📥 {} extensions récupérées depuis l'API (non sauvegardées)", sets.size());
+                    // SUPPRIMÉ : sets.forEach(persistenceService::saveOrUpdateSet);
                 });
     }
 
@@ -219,8 +219,7 @@ public class MtgService {
     }
 
     /**
-     * MÉTHODE UNIFIÉE - Récupère les cartes d'une extension
-     * Utilise Scryfall pour les sets Universes Beyond, MTG API pour le reste
+     * MÉTHODE UNIFIÉE - Récupère les cartes d'une extension (SANS sauvegarde automatique)
      */
     public Mono<List<MtgCard>> getCardsFromSet(String setCode) {
         logger.info("🔍 Récupération des cartes pour l'extension: {}", setCode);
@@ -237,19 +236,12 @@ public class MtgService {
 
         // Si le set n'existe que sur Scryfall, utiliser ScryfallService
         if (SCRYFALL_ONLY_SETS.contains(setCode.toUpperCase())) {
-            logger.info("🔮 Extension {} détectée comme Universes Beyond - utilisation de Scryfall", setCode);
+            logger.info("🔮 Extension {} détectée comme Universes Beyond - récupération depuis Scryfall (sans sauvegarde)", setCode);
             return scryfallService.getCardsFromScryfall(setCode)
                     .doOnNext(cards -> {
                         if (!cards.isEmpty()) {
-                            logger.info("✅ {} cartes récupérées depuis Scryfall pour {}", cards.size(), setCode);
-                            // Sauvegarder en arrière-plan
-                            CompletableFuture.runAsync(() -> {
-                                try {
-                                    persistenceService.saveCardsForSet(setCode, cards);
-                                } catch (Exception e) {
-                                    logger.error("❌ Erreur sauvegarde {} : {}", setCode, e.getMessage());
-                                }
-                            });
+                            logger.info("✅ {} cartes récupérées depuis Scryfall pour {} (non sauvegardées)", cards.size(), setCode);
+                            // SUPPRIMÉ : Sauvegarde automatique en arrière-plan
                         } else {
                             logger.warn("⚠️ Aucune carte Scryfall trouvée pour {}", setCode);
                         }
@@ -257,7 +249,7 @@ public class MtgService {
         }
 
         // Sinon, utiliser l'API MTG classique
-        logger.info("🌐 Récupération depuis l'API MTG officielle pour : {}", setCode);
+        logger.info("🌐 Récupération depuis l'API MTG officielle pour : {} (sans sauvegarde)", setCode);
         return fetchCardsFromMtgApi(setCode);
     }
 
@@ -389,7 +381,7 @@ public class MtgService {
 
     // ========== MÉTHODES PRIVÉES POUR L'API EXTERNE ==========
 
-    private Mono<List<MtgSet>> fetchSetsFromApi() {
+    public Mono<List<MtgSet>> fetchSetsFromApi() {
         return webClient.get()
                 .uri(baseUrl + "/sets")
                 .retrieve()
@@ -567,4 +559,46 @@ public class MtgService {
                 entity.getLocalImagePath() != null ? "/api/images/" + entity.getId() : entity.getOriginalImageUrl()
         );
     }
+
+    // NOUVELLE MÉTHODE : Sauvegarder manuellement les extensions
+    public Mono<String> saveSetsToDatabaseManually(List<MtgSet> sets) {
+        return Mono.fromCallable(() -> {
+            logger.info("💾 Sauvegarde MANUELLE de {} extensions en base", sets.size());
+
+            int savedCount = 0;
+            for (MtgSet set : sets) {
+                try {
+                    persistenceService.saveOrUpdateSet(set);
+                    savedCount++;
+                } catch (Exception e) {
+                    logger.error("❌ Erreur sauvegarde extension {} : {}", set.code(), e.getMessage());
+                }
+            }
+
+            String message = String.format("✅ %d/%d extensions sauvegardées manuellement", savedCount, sets.size());
+            logger.info(message);
+            return message;
+        });
+    }
+
+    // NOUVELLE MÉTHODE : Sauvegarder manuellement les cartes
+    public Mono<String> saveCardsToDatabaseManually(String setCode, List<MtgCard> cards) {
+        return Mono.fromCallable(() -> {
+            logger.info("💾 Sauvegarde MANUELLE de {} cartes pour l'extension {}", cards.size(), setCode);
+
+            try {
+                CompletableFuture<Integer> future = persistenceService.saveCardsForSet(setCode, cards);
+                Integer savedCount = future.get(); // Attendre la fin
+
+                String message = String.format("✅ %d cartes sauvegardées manuellement pour %s", savedCount, setCode);
+                logger.info(message);
+                return message;
+            } catch (Exception e) {
+                String errorMessage = String.format("❌ Erreur sauvegarde cartes %s : %s", setCode, e.getMessage());
+                logger.error(errorMessage);
+                throw new RuntimeException(errorMessage);
+            }
+        });
+    }
+
 }

@@ -75,5 +75,8 @@ public interface CardRepository extends JpaRepository<CardEntity, UUID> {
     // Nouvelles méthodes pour la gestion des doublons avec UUID
     @Query("SELECT c FROM CardEntity c WHERE c.externalId = :externalId AND c.setCode = :setCode")
     List<CardEntity> findDuplicatesByExternalIdAndSetCode(@Param("externalId") String externalId, @Param("setCode") String setCode);
+
+    List<CardEntity> findByNameAndSetCode(String name, String setCode);
+
 }
 

@@ -9,6 +9,7 @@ import com.pcagrad.magic.model.MtgCard;
 import com.pcagrad.magic.model.MtgSet;
 import com.pcagrad.magic.repository.CardRepository;
 import com.pcagrad.magic.repository.SetRepository;
+import com.pcagrad.magic.service.CardPersistenceService;
 import com.pcagrad.magic.service.ImageDownloadService;
 import com.pcagrad.magic.service.MtgService;
 import com.pcagrad.magic.service.ScryfallService;
@@ -52,79 +53,129 @@ public class MtgController {
 
     private ScryfallService scryfallService;
 
-    // ENDPOINT DE DEBUG POUR RETROUVER FIN
-// Ajoutez cet endpoint dans MtgController.java
+    @Autowired
+    private CardPersistenceService persistenceService;
 
-    @GetMapping("/debug/find-fin")
-    public ResponseEntity<ApiResponse<Object>> debugFindFin() {
+    // Ajoutez cet endpoint dans MtgController.java
+
+    /**
+     * Endpoint pour sauvegarder manuellement UNE extension spécifique
+     */
+    @PostMapping("/admin/save-set-manually/{setCode}")
+    public Mono<ResponseEntity<? extends ApiResponse<? extends Object>>> saveSetManually(@PathVariable String setCode) {
+        logger.info("🎯 Demande de sauvegarde manuelle de l'extension : {}", setCode);
+
+        return mtgService.getAllSets()
+                .map(sets -> {
+                    // Trouver l'extension spécifique
+                    Optional<MtgSet> targetSet = sets.stream()
+                            .filter(set -> setCode.equalsIgnoreCase(set.code()))
+                            .findFirst();
+
+                    if (targetSet.isEmpty()) {
+                        return ResponseEntity.badRequest()
+                                .body(ApiResponse.error("Extension " + setCode + " non trouvée"));
+                    }
+
+                    try {
+                        // Sauvegarder uniquement cette extension
+                        persistenceService.saveOrUpdateSet(targetSet.get());
+
+                        String message = String.format("✅ Extension %s (%s) sauvegardée",
+                                setCode, targetSet.get().name());
+                        logger.info(message);
+
+                        return ResponseEntity.ok(ApiResponse.success(message));
+
+                    } catch (Exception e) {
+                        String errorMessage = "Erreur sauvegarde extension " + setCode + " : " + e.getMessage();
+                        logger.error("❌ {}", errorMessage);
+                        return ResponseEntity.badRequest()
+                                .body(ApiResponse.error(errorMessage));
+                    }
+                })
+                .onErrorReturn(ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Erreur lors de la récupération des extensions")));
+    }
+    /**
+     * Endpoint pour sauvegarder manuellement les cartes d'une extension
+     */
+    @PostMapping("/admin/save-cards-manually/{setCode}")
+    public Mono<ResponseEntity<ApiResponse<String>>> saveCardsManually(@PathVariable String setCode) {
+        logger.info("🎯 Demande de sauvegarde manuelle des cartes pour : {}", setCode);
+
+        return mtgService.getCardsFromSet(setCode)
+                .flatMap(cards -> {
+                    if (cards.isEmpty()) {
+                        return Mono.just(ResponseEntity.badRequest()
+                                .body(ApiResponse.error("Aucune carte à sauvegarder pour " + setCode)));
+                    }
+
+                    return mtgService.saveCardsToDatabaseManually(setCode, cards)
+                            .map(message -> ResponseEntity.ok(ApiResponse.success(message)))
+                            .onErrorReturn(ResponseEntity.badRequest()
+                                    .body(ApiResponse.error("Erreur lors de la sauvegarde des cartes pour " + setCode)));
+                });
+    }
+
+    /**
+     * Endpoint pour charger les extensions depuis l'API SANS les sauvegarder
+     */
+    @GetMapping("/sets/load-from-api")
+    public Mono<ResponseEntity<ApiResponse<List<MtgSet>>>> loadSetsFromApi() {
+        logger.info("🌐 Chargement des extensions depuis l'API (sans sauvegarde)");
+
+        return mtgService.fetchSetsFromApi()
+                .map(sets -> ResponseEntity.ok(ApiResponse.success(sets,
+                        sets.size() + " extensions chargées depuis l'API (non sauvegardées)")))
+                .onErrorReturn(ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Erreur lors du chargement depuis l'API")));
+    }
+
+    /**
+     * Endpoint pour charger les cartes depuis Scryfall SANS les sauvegarder
+     */
+    @GetMapping("/sets/{setCode}/load-from-scryfall")
+    public Mono<ResponseEntity<ApiResponse<List<MtgCard>>>> loadCardsFromScryfall(@PathVariable String setCode) {
+        logger.info("🔮 Chargement des cartes {} depuis Scryfall (sans sauvegarde)", setCode);
+
+        return scryfallService.getCardsFromScryfall(setCode)
+                .map(cards -> ResponseEntity.ok(ApiResponse.success(cards,
+                        cards.size() + " cartes chargées depuis Scryfall pour " + setCode + " (non sauvegardées)")))
+                .onErrorReturn(ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Erreur lors du chargement depuis Scryfall pour " + setCode)));
+    }
+
+    /**
+     * Statistiques sans déclenchement de sauvegarde
+     */
+    @GetMapping("/admin/preview-stats")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getPreviewStats() {
         try {
-            logger.info("🔍 DEBUG - Recherche extension FIN après migration UUID");
+            Map<String, Object> stats = new HashMap<>();
 
-            Map<String, Object> debugInfo = new HashMap<>();
+            // Stats base de données
+            stats.put("setsInDatabase", setRepository.count());
+            stats.put("cardsInDatabase", cardRepository.count());
+            stats.put("syncedSets", setRepository.countSyncedSets());
 
-            // 1. Compter toutes les extensions
-            long totalSets = setRepository.count();
-            debugInfo.put("totalSetsInDb", totalSets);
-
-            // 2. Rechercher FIN par code (nouvelle méthode)
-            Optional<SetEntity> finByCode = setRepository.findByCode("FIN");
-            debugInfo.put("finFoundByCode", finByCode.isPresent());
-
-            if (finByCode.isPresent()) {
-                SetEntity fin = finByCode.get();
-                Map<String, Object> finInfo = new HashMap<>();
-                finInfo.put("uuid", fin.getId().toString());
-                finInfo.put("code", fin.getCode());
-                finInfo.put("name", fin.getName());
-                finInfo.put("type", fin.getType());
-                finInfo.put("releaseDate", fin.getReleaseDate());
-                finInfo.put("cardsSynced", fin.getCardsSynced());
-                finInfo.put("cardsCount", fin.getCardsCount());
-                debugInfo.put("finDetails", finInfo);
-
-                // Compter les cartes FIN
-                long cardsCount = cardRepository.countBySetCode("FIN");
-                debugInfo.put("cardsInDbForFin", cardsCount);
+            // Stats API (sans sauvegarder)
+            try {
+                List<MtgSet> apiSets = mtgService.getAllSets().block();
+                stats.put("setsAvailableFromAPI", apiSets != null ? apiSets.size() : 0);
+            } catch (Exception e) {
+                stats.put("setsAvailableFromAPI", "Erreur de connexion API");
             }
 
-            // 3. Rechercher toutes les extensions qui contiennent "FIN"
-            List<SetEntity> setsWithFin = setRepository.findByNameContainingIgnoreCaseOrderByReleaseDateDesc("FINAL");
-            debugInfo.put("setsContainingFinal", setsWithFin.size());
+            stats.put("message", "Données en lecture seule - aucune sauvegarde automatique");
 
-            List<Map<String, Object>> finLikeSets = setsWithFin.stream()
-                    .map(set -> {
-                        Map<String, Object> setInfo = new HashMap<>();
-                        setInfo.put("uuid", set.getId().toString());
-                        setInfo.put("code", set.getCode());
-                        setInfo.put("name", set.getName());
-                        return setInfo;
-                    })
-                    .collect(Collectors.toList());
-            debugInfo.put("setsWithFinalInName", finLikeSets);
-
-            // 4. Lister les 10 dernières extensions par date
-            List<SetEntity> recentSets = setRepository.findLatestSets();
-            List<Map<String, Object>> recentSetsInfo = recentSets.stream()
-                    .limit(10)
-                    .map(set -> {
-                        Map<String, Object> setInfo = new HashMap<>();
-                        setInfo.put("code", set.getCode());
-                        setInfo.put("name", set.getName());
-                        setInfo.put("releaseDate", set.getReleaseDate());
-                        setInfo.put("cardsCount", set.getCardsCount());
-                        return setInfo;
-                    })
-                    .collect(Collectors.toList());
-            debugInfo.put("recent10Sets", recentSetsInfo);
-
-            return ResponseEntity.ok(ApiResponse.success(debugInfo, "Debug FIN terminé"));
-
+            return ResponseEntity.ok(ApiResponse.success(stats, "Statistiques preview"));
         } catch (Exception e) {
-            logger.error("❌ Erreur debug FIN : {}", e.getMessage());
             return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("Erreur debug : " + e.getMessage()));
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
         }
     }
+
 
     // ENDPOINT POUR RECRÉER FIN SI NÉCESSAIRE
     @PostMapping("/debug/recreate-fin")
@@ -166,28 +217,21 @@ public class MtgController {
         }
     }
 
-// CORRECTION DANS getLatestSet() pour gérer le fallback FIN
-// Dans MtgService.java, corrigez cette partie :
-
-    public Mono<MtgSet> getLatestSet() {
-        logger.debug("🔍 Récupération de la dernière extension");
-
-        // Chercher d'abord en base avec priorité aux extensions avec cartes
-        List<SetEntity> allSets = setRepository.findLatestSets();
-
-        if (!allSets.isEmpty()) {
-            // ... logique existante ...
-        }
-
-        // CORRECTION : Fallback vers FIN avec findByCode au lieu de findById
-        Optional<SetEntity> finFallback = setRepository.findByCode("FIN");
-        if (finFallback.isPresent() && finFallback.get().getCardsSynced()) {
-            logger.info("🎯 Fallback vers FIN (Final Fantasy) qui a des cartes synchronisées");
-            return Mono.just(entityToModel(finFallback.get()));
-        }
-
-        // ... reste de la méthode
+    @GetMapping("/sets/latest")
+    public Mono<ResponseEntity<ApiResponse<MtgSet>>> getLatestSet() {
+        return mtgService.getLatestSet()
+                .map(set -> {
+                    if (set != null) {
+                        return ResponseEntity.ok(ApiResponse.success(set, "Dernière extension récupérée"));
+                    } else {
+                        return ResponseEntity.notFound().<ApiResponse<MtgSet>>build();
+                    }
+                })
+                .onErrorReturn(ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Erreur lors de la récupération de la dernière extension")));
     }
+
+
 
 // SQL DIRECT pour vérifier en base si nécessaire :
 /*
@@ -217,7 +261,6 @@ LIMIT 10;
                 .onErrorReturn(ResponseEntity.badRequest()
                         .body(ApiResponse.error("Erreur lors de la récupération des extensions")));
     }
-
 
 
     @GetMapping("/sets/latest/cards")
