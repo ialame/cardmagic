@@ -108,6 +108,19 @@
               {{ syncingComplete[set.code] ? 'Sync...' : 'Complète' }}
             </button>
 
+            <!-- Bouton spécial Final Fantasy -->
+            <button
+              v-if="set.code === 'FIN'"
+              @click.stop="syncFinalFantasyComplete()"
+              :disabled="syncingFinalFantasy"
+              class="final-fantasy-button"
+              :title="'Synchronisation Final Fantasy avec TOUTES les variantes (objectif: 586 cartes)'"
+            >
+              <span v-if="syncingFinalFantasy">🎮</span>
+              <span v-else>🎯</span>
+              {{ syncingFinalFantasy ? 'FF Sync...' : 'FF 586' }}
+            </button>
+
             <!-- Bouton Sauvegarder -->
             <button
               @click.stop="saveSetData(set.code)"
@@ -128,8 +141,20 @@
               :title="'Télécharger toutes les images de ' + set.name"
             >
               <span v-if="downloadingImages[set.code]">🖼️</span>
-              <span v-else">📸</span>
+              <span v-else>📸</span>
               {{ downloadingImages[set.code] ? 'Télécharge...' : 'Images' }}
+            </button>
+
+            <!-- Bouton Debug Pagination -->
+            <button
+              @click.stop="debugPagination(set.code)"
+              :disabled="debuggingPagination[set.code]"
+              class="debug-button"
+              :title="'Debug pagination pour ' + set.name"
+            >
+              <span v-if="debuggingPagination[set.code]">🔍</span>
+              <span v-else>🐛</span>
+              {{ debuggingPagination[set.code] ? 'Debug...' : 'Debug' }}
             </button>
           </div>
         </div>
@@ -189,6 +214,9 @@ const loadingScryfall = ref<Record<string, boolean>>({})
 const syncingComplete = ref<Record<string, boolean>>({})
 const savingCards = ref<Record<string, boolean>>({})
 const downloadingImages = ref<Record<string, boolean>>({})
+const debuggingPagination = ref<Record<string, boolean>>({})
+const syncingFinalFantasy = ref(false) // État spécial pour Final Fantasy
+const debuggingFin = ref(false) // Debug spécial Final Fantasy
 
 // Statut des opérations
 const operationStatus = ref<{type: string, message: string} | null>(null)
@@ -393,6 +421,35 @@ const syncCompleteFromScryfall = async (setCode: string) => {
   }
 }
 
+const syncFinalFantasyComplete = async () => {
+  try {
+    syncingFinalFantasy.value = true
+    console.log('🎮 Synchronisation Final Fantasy COMPLÈTE (toutes variantes)')
+
+    // Endpoint spécial pour Final Fantasy avec toutes les variantes
+    const response = await axios.post('/api/scryfall/sync-final-fantasy-complete')
+
+    if (response.data.success) {
+      showOperationStatus('success', 'Synchronisation Final Fantasy complète démarrée (objectif: 586 cartes)')
+
+      // Attendre plus longtemps pour la synchronisation complète avec variantes
+      setTimeout(async () => {
+        await refreshSetStatus('FIN')
+        await mtgStore.fetchSetByCode('FIN')
+        showOperationStatus('success', 'Final Fantasy synchronisé avec toutes les variantes!')
+      }, 15000) // 15 secondes pour laisser le temps à toutes les variantes
+    } else {
+      throw new Error(response.data.message)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur sync Final Fantasy complète:', error)
+    showOperationStatus('error', 'Erreur lors de la synchronisation Final Fantasy complète')
+  } finally {
+    syncingFinalFantasy.value = false
+  }
+}
+
 const downloadImages = async (setCode: string) => {
   try {
     downloadingImages.value[setCode] = true
@@ -413,6 +470,115 @@ const downloadImages = async (setCode: string) => {
     showOperationStatus('error', `Erreur lors du téléchargement des images de ${setCode}`)
   } finally {
     downloadingImages.value[setCode] = false
+  }
+}
+
+const debugPagination = async (setCode: string) => {
+  try {
+    debuggingPagination.value[setCode] = true
+    console.log('🔍 Debug pagination pour:', setCode)
+
+    // Test debug direct
+    const response = await axios.get(`/api/scryfall/debug-pagination-problem/${setCode}`)
+
+    console.log('🐛 Résultat debug:', response.data)
+
+    if (response.data.success) {
+      const data = response.data.data
+      const cardsReceived = data.cardsReceived || 0
+      const isPaginationWorking = data.isPaginationWorking || false
+
+      let message = `Debug ${setCode}: ${cardsReceived} cartes récupérées`
+      let type = 'success'
+
+      if (!isPaginationWorking && cardsReceived <= 175) {
+        message = `PROBLÈME: Seulement ${cardsReceived} cartes pour ${setCode} - Pagination échouée!`
+        type = 'error'
+      }
+
+      showOperationStatus(type, message)
+
+      // Afficher plus de détails dans la console
+      console.log('📊 Détails debug:', {
+        setCode,
+        cardsReceived,
+        isPaginationWorking,
+        problem: data.problem,
+        sampleCards: data.sampleCards
+      })
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur debug pagination:', error)
+    showOperationStatus('error', `Erreur debug pagination ${setCode}`)
+  } finally {
+    debuggingPagination.value[setCode] = false
+  }
+}
+
+const debugFinPage1 = async () => {
+  try {
+    debuggingFin.value = true
+    console.log('🔍 Debug Final Fantasy page 1 RAW')
+
+    const response = await axios.get('/api/scryfall/debug-fin-raw-page1')
+    console.log('🐛 Debug FIN Page 1:', response.data)
+
+    if (response.data.success) {
+      const data = response.data.data
+      const totalCards = data.totalCards || 0
+      const page1Cards = data.dataArraySize || 0
+      const hasMore = data.hasMoreValue
+
+      const message = `FIN Page 1: ${page1Cards} cartes, total=${totalCards}, hasMore=${hasMore}`
+      showOperationStatus('success', message)
+
+      console.log('📊 Analyse FIN Page 1:', {
+        totalCards,
+        page1Cards,
+        hasMore,
+        analysis: data.analysis
+      })
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur debug FIN page 1:', error)
+    showOperationStatus('error', 'Erreur debug FIN page 1')
+  } finally {
+    debuggingFin.value = false
+  }
+}
+
+const debugFinPagination = async () => {
+  try {
+    debuggingFin.value = true
+    console.log('📄 Debug Final Fantasy pagination complète')
+
+    const response = await axios.get('/api/scryfall/debug-fin-manual-pagination')
+    console.log('🐛 Debug FIN Pagination:', response.data)
+
+    if (response.data.success) {
+      const data = response.data.data
+      const totalFound = data.totalCardsFound || 0
+      const pagesSuccessful = data.pagesSuccessful || 0
+
+      const message = `FIN Pagination: ${totalFound} cartes sur ${pagesSuccessful} pages`
+      const type = totalFound >= 300 ? 'success' : 'error'
+      showOperationStatus(type, message)
+
+      console.log('📊 Analyse FIN Pagination:', {
+        totalFound,
+        pagesSuccessful,
+        analysis: data.analysis,
+        pages: data.pages
+      })
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur debug FIN pagination:', error)
+    showOperationStatus('error', 'Erreur debug FIN pagination')
+  } finally {
+    debuggingFin.value = false
   }
 }
 
@@ -683,7 +849,9 @@ onMounted(() => {
 .scryfall-button,
 .complete-button,
 .save-button,
-.download-button {
+.download-button,
+.debug-button,
+.final-fantasy-button {
   flex: 1;
   min-width: 70px;
   padding: 0.5rem;
@@ -724,11 +892,30 @@ onMounted(() => {
   color: white;
 }
 
+.debug-button {
+  background: linear-gradient(45deg, #9b59b6, #8e44ad);
+  color: white;
+  font-size: 0.7rem;
+}
+
+.debug-button:hover:not(:disabled) {
+  background: linear-gradient(45deg, #8e44ad, #7d3c98);
+}
+
+.final-fantasy-button {
+  background: linear-gradient(45deg, #ff6b9d, #c44569);
+  color: white;
+  border: 2px solid #ff3838;
+  font-weight: 700;
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+}
+
 .load-button:hover:not(:disabled),
 .scryfall-button:hover:not(:disabled),
 .complete-button:hover:not(:disabled),
 .save-button:hover:not(:disabled),
-.download-button:hover:not(:disabled) {
+.download-button:hover:not(:disabled),
+.final-fantasy-button:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
@@ -737,7 +924,9 @@ onMounted(() => {
 .scryfall-button:disabled,
 .complete-button:disabled,
 .save-button:disabled,
-.download-button:disabled {
+.download-button:disabled,
+.debug-button:disabled,
+.final-fantasy-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -844,7 +1033,9 @@ onMounted(() => {
   .load-button,
   .scryfall-button,
   .save-button,
-  .download-button {
+  .download-button,
+  .debug-button,
+  .final-fantasy-button {
     min-width: auto;
   }
 

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pcagrad.magic.dto.ApiResponse;
 import com.pcagrad.magic.entity.CardEntity;
+import com.pcagrad.magic.entity.SetEntity;
 import com.pcagrad.magic.model.MtgCard;
 import com.pcagrad.magic.service.ScryfallService;
 import com.pcagrad.magic.service.CardPersistenceService;
@@ -20,10 +21,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
@@ -1504,4 +1502,139 @@ public class ScryfallController {
         }
     }
 
+    /**
+     * Test spécial Final Fantasy avec TOUTES les variantes (objectif: 586 cartes)
+     */
+    @PostMapping("/sync-final-fantasy-complete")
+    public ResponseEntity<ApiResponse<String>> syncFinalFantasyComplete() {
+        try {
+            logger.info("🎮 Synchronisation COMPLÈTE Final Fantasy avec TOUTES les variantes (objectif: 586 cartes)");
+
+            CompletableFuture.runAsync(() -> {
+                try {
+                    // Supprimer les anciennes cartes Final Fantasy
+                    List<CardEntity> existingCards = cardRepository.findBySetCodeOrderByNameAsc("FIN");
+                    if (!existingCards.isEmpty()) {
+                        cardRepository.deleteAll(existingCards);
+                        logger.info("🗑️ {} anciennes cartes Final Fantasy supprimées", existingCards.size());
+                    }
+
+                    // Synchroniser avec la nouvelle méthode qui inclut TOUTES les variantes
+                    scryfallService.getCardsFromScryfall("FIN")
+                            .subscribe(allCards -> {
+                                logger.info("✅ {} cartes Final Fantasy récupérées depuis Scryfall (objectif: 586)", allCards.size());
+
+                                if (allCards.size() >= 580) {
+                                    logger.info("🎉 SUCCÈS: {} cartes >= objectif de 586!", allCards.size());
+                                } else if (allCards.size() >= 300) {
+                                    logger.warn("⚠️ {} cartes récupérées, mais moins que l'objectif de 586", allCards.size());
+                                } else {
+                                    logger.error("❌ Seulement {} cartes récupérées - problème de synchronisation", allCards.size());
+                                }
+
+                                // Sauvegarder en base
+                                if (!allCards.isEmpty()) {
+                                    persistenceService.saveCardsForSet("FIN", allCards)
+                                            .thenAccept(savedCount -> {
+                                                logger.info("💾 {} cartes Final Fantasy sauvegardées en base", savedCount);
+
+                                                // Statistiques par rareté
+                                                long commons = allCards.stream().filter(c -> "Common".equals(c.rarity())).count();
+                                                long uncommons = allCards.stream().filter(c -> "Uncommon".equals(c.rarity())).count();
+                                                long rares = allCards.stream().filter(c -> "Rare".equals(c.rarity())).count();
+                                                long mythics = allCards.stream().filter(c -> "Mythic Rare".equals(c.rarity())).count();
+                                                long specials = allCards.stream().filter(c -> "Special".equals(c.rarity())).count();
+
+                                                logger.info("🎯 Répartition Final Fantasy: {} Common, {} Uncommon, {} Rare, {} Mythic, {} Special",
+                                                        commons, uncommons, rares, mythics, specials);
+                                            });
+                                }
+                            }, error -> {
+                                logger.error("❌ Erreur récupération Final Fantasy : {}", error.getMessage());
+                            });
+
+                } catch (Exception e) {
+                    logger.error("❌ Erreur générale sync Final Fantasy : {}", e.getMessage());
+                }
+            });
+
+            return ResponseEntity.accepted()
+                    .body(ApiResponse.success(
+                            "Synchronisation COMPLÈTE Final Fantasy démarrée (toutes variantes)",
+                            "Objectif: récupérer les 586 cartes incluant foils, borderless, et variantes spéciales"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur déclenchement sync Final Fantasy : {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * DEBUG: Vérifier le nombre de cartes avant/après synchronisation
+     */
+    @GetMapping("/debug/cards-count/{setCode}")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> debugCardsCount(@PathVariable String setCode) {
+        try {
+            logger.info("🔍 Debug comptage cartes pour {}", setCode);
+
+            Map<String, Object> count = new HashMap<>();
+            count.put("setCode", setCode.toUpperCase());
+            count.put("timestamp", LocalDateTime.now());
+
+            // Compter en base
+            long cardsInDb = cardRepository.countBySetCode(setCode);
+            count.put("cardsInDatabase", cardsInDb);
+
+            // Vérifier si l'extension existe
+            Optional<SetEntity> setEntity = setRepository.findByCode(setCode);
+            if (setEntity.isPresent()) {
+                SetEntity set = setEntity.get();
+                count.put("setExists", true);
+                count.put("setName", set.getName());
+                count.put("cardsSynced", set.getCardsSynced());
+                count.put("cardsCount", set.getCardsCount());
+                count.put("lastSyncAt", set.getLastSyncAt());
+
+                // Différence entre l'extension et la base
+                if (set.getCardsCount() != null) {
+                    count.put("countDifference", cardsInDb - set.getCardsCount());
+                }
+            } else {
+                count.put("setExists", false);
+            }
+
+            // Quelques exemples de cartes pour vérification
+            List<CardEntity> sampleCards = cardRepository.findBySetCodeOrderByNameAsc(setCode)
+                    .stream()
+                    .limit(5)
+                    .collect(Collectors.toList());
+
+            List<Map<String, Object>> samples = sampleCards.stream()
+                    .map(card -> {
+                        Map<String, Object> cardInfo = new HashMap<>();
+                        cardInfo.put("name", card.getName());
+                        cardInfo.put("rarity", card.getRarity());
+                        cardInfo.put("id", card.getId());
+                        return cardInfo;
+                    })
+                    .collect(Collectors.toList());
+
+            count.put("sampleCards", samples);
+
+            String message = String.format("Extension %s: %d cartes en base", setCode, cardsInDb);
+            if (cardsInDb == 0) {
+                message += " - AUCUNE CARTE TROUVÉE";
+            } else if (cardsInDb <= 175) {
+                message += " - POSSIBLEMENT INCOMPLET";
+            }
+
+            return ResponseEntity.ok(ApiResponse.success(count, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur debug comptage {} : {}", setCode, e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
+        }
+    }
 }
