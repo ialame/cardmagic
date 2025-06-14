@@ -1,3 +1,4 @@
+// ========== SetRepository.java ==========
 package com.pcagrad.magic.repository;
 
 import com.pcagrad.magic.entity.SetEntity;
@@ -9,13 +10,18 @@ import org.springframework.stereotype.Repository;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
-public interface SetRepository extends JpaRepository<SetEntity, String> {
+public interface SetRepository extends JpaRepository<SetEntity, UUID> {
+
+    // Recherche par code (clé métier)
+    Optional<SetEntity> findByCode(String code);
+    boolean existsByCode(String code);
+    void deleteByCode(String code);
 
     // Rechercher par nom (partiel)
     List<SetEntity> findByNameContainingIgnoreCaseOrderByReleaseDateDesc(String name);
-
 
     // Rechercher par bloc
     List<SetEntity> findByBlockOrderByReleaseDateDesc(String block);
@@ -49,27 +55,22 @@ public interface SetRepository extends JpaRepository<SetEntity, String> {
     @Query("SELECT s.type, COUNT(s) FROM SetEntity s GROUP BY s.type ORDER BY COUNT(s) DESC")
     List<Object[]> countByType();
 
-
     @Query("SELECT SUM(s.cardsCount) FROM SetEntity s WHERE s.cardsCount IS NOT NULL")
     Long getTotalCardsCount();
 
     // Extensions populaires (avec le plus de cartes)
     List<SetEntity> findTop10ByOrderByCardsCountDesc();
 
-    // Vérifier si une extension existe par code
-    boolean existsByCode(String code);
-    // Méthodes existantes...
+    // Méthodes existantes
     List<SetEntity> findByCardsSyncedFalseOrderByReleaseDateDesc();
 
     @Query("SELECT COUNT(s) FROM SetEntity s WHERE s.cardsSynced = true")
     long countSyncedSets();
 
-    // AJOUTEZ CETTE MÉTHODE :
-    Optional<SetEntity> findByCode(String code);
-
     // Optionnel : autres méthodes utiles
     Optional<SetEntity> findByName(String name);
     List<SetEntity> findByTypeOrderByReleaseDateDesc(String type);
+
     @Query("SELECT s FROM SetEntity s WHERE YEAR(s.releaseDate) = :year ORDER BY s.releaseDate DESC")
     List<SetEntity> findByReleaseDateYear(@Param("year") int year);
 }

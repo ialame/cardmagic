@@ -14,7 +14,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -43,7 +42,7 @@ public class CardPersistenceService {
     public SetEntity saveOrUpdateSet(MtgSet mtgSet) {
         logger.debug("💾 Sauvegarde de l'extension : {} ({})", mtgSet.name(), mtgSet.code());
 
-        Optional<SetEntity> existingSet = setRepository.findById(mtgSet.code());
+        Optional<SetEntity> existingSet = setRepository.findByCode(mtgSet.code());
         SetEntity setEntity;
 
         if (existingSet.isPresent()) {
@@ -59,7 +58,7 @@ public class CardPersistenceService {
     }
 
     /**
-     * Sauvegarde les cartes d'une extension en base
+     * Sauvegarde les cartes d'une extension en base - VERSION UUID
      */
     @Async
     public CompletableFuture<Integer> saveCardsForSet(String setCode, List<MtgCard> cards) {
@@ -72,12 +71,12 @@ public class CardPersistenceService {
 
             for (MtgCard mtgCard : cards) {
                 try {
-                    CardEntity result = saveOrUpdateCard(mtgCard, setCode);
+                    CardEntity result = saveOrUpdateCardWithUUID(mtgCard, setCode);
                     if (result != null) {
-                        if (cardRepository.existsByIdAndSetCode(mtgCard.id(), setCode)) {
-                            updatedCount++;
-                        } else {
+                        if (result.getCreatedAt().equals(result.getUpdatedAt())) {
                             savedCount++;
+                        } else {
+                            updatedCount++;
                         }
 
                         // Déclencher le téléchargement de l'image en arrière-plan
@@ -105,25 +104,82 @@ public class CardPersistenceService {
     }
 
     /**
-     * Sauvegarde ou met à jour une carte individuelle
+     * NOUVELLE MÉTHODE - Sauvegarde ou met à jour une carte avec gestion UUID
      */
-    public CardEntity saveOrUpdateCard(MtgCard mtgCard, String setCode) {
+    public CardEntity saveOrUpdateCardWithUUID(MtgCard mtgCard, String setCode) {
         if (mtgCard.id() == null || mtgCard.id().isEmpty()) {
-            logger.warn("⚠️ Carte sans ID ignorée : {}", mtgCard.name());
+            logger.warn("⚠️ Carte sans ID externe ignorée : {}", mtgCard.name());
             return null;
         }
 
-        Optional<CardEntity> existingCard = cardRepository.findById(mtgCard.id());
+        // Chercher par externalId et setCode pour éviter les doublons
+        Optional<CardEntity> existingCard = cardRepository.findByExternalIdAndSetCode(mtgCard.id(), setCode);
         CardEntity cardEntity;
 
         if (existingCard.isPresent()) {
             cardEntity = existingCard.get();
             updateCardEntity(cardEntity, mtgCard);
+            logger.debug("🔄 Mise à jour carte existante : {} (UUID: {})", mtgCard.name(), cardEntity.getId());
         } else {
-            cardEntity = createCardEntity(mtgCard, setCode);
+            cardEntity = createCardEntityWithUUID(mtgCard, setCode);
+            logger.debug("✨ Nouvelle carte créée : {} (External ID: {})", mtgCard.name(), mtgCard.id());
         }
 
         return cardRepository.save(cardEntity);
+    }
+
+    /**
+     * Méthode pour la compatibilité avec l'ancien code
+     */
+    public CardEntity saveOrUpdateCard(MtgCard mtgCard, String setCode) {
+        return saveOrUpdateCardWithUUID(mtgCard, setCode);
+    }
+
+    /**
+     * Méthode pour sauvegarder une liste de cartes (utilisée par ScryfallController)
+     */
+    public int saveCards(List<MtgCard> cards, String setCode) {
+        logger.info("💾 Début de la sauvegarde de {} cartes pour l'extension {}", cards.size(), setCode);
+
+        int savedCount = 0;
+        int updatedCount = 0;
+        int skippedCount = 0;
+
+        for (MtgCard mtgCard : cards) {
+            try {
+                CardEntity result = saveOrUpdateCardWithUUID(mtgCard, setCode);
+                if (result != null) {
+                    if (result.getCreatedAt().equals(result.getUpdatedAt())) {
+                        savedCount++;
+                    } else {
+                        updatedCount++;
+                    }
+
+                    // Déclencher le téléchargement de l'image en arrière-plan
+                    if (result.getOriginalImageUrl() != null && !result.getOriginalImageUrl().isEmpty()) {
+                        try {
+                            imageDownloadService.downloadCardImage(result);
+                        } catch (Exception e) {
+                            logger.warn("⚠️ Erreur téléchargement image pour {} : {}", mtgCard.name(), e.getMessage());
+                        }
+                    }
+                } else {
+                    skippedCount++;
+                }
+            } catch (Exception e) {
+                logger.error("❌ Erreur lors de la sauvegarde de la carte {} : {}",
+                        mtgCard.name(), e.getMessage());
+                skippedCount++;
+            }
+        }
+
+        // Mettre à jour les statistiques de l'extension
+        updateSetStatistics(setCode);
+
+        logger.info("✅ Sauvegarde terminée pour {} : {} nouvelles, {} mises à jour, {} ignorées",
+                setCode, savedCount, updatedCount, skippedCount);
+
+        return savedCount + updatedCount;
     }
 
     /**
@@ -145,7 +201,7 @@ public class CardPersistenceService {
      * Vérifie si une extension est déjà synchronisée
      */
     public boolean isSetSynced(String setCode) {
-        return setRepository.findById(setCode)
+        return setRepository.findByCode(setCode)
                 .map(SetEntity::getCardsSynced)
                 .orElse(false);
     }
@@ -154,7 +210,7 @@ public class CardPersistenceService {
      * Marque une extension comme synchronisée
      */
     public void markSetAsSynced(String setCode) {
-        setRepository.findById(setCode).ifPresent(setEntity -> {
+        setRepository.findByCode(setCode).ifPresent(setEntity -> {
             setEntity.setCardsSynced(true);
             setEntity.setLastSyncAt(LocalDateTime.now());
             setRepository.save(setEntity);
@@ -168,7 +224,7 @@ public class CardPersistenceService {
     private void updateSetStatistics(String setCode) {
         long cardCount = cardRepository.countBySetCode(setCode);
 
-        setRepository.findById(setCode).ifPresent(setEntity -> {
+        setRepository.findByCode(setCode).ifPresent(setEntity -> {
             setEntity.setCardsCount((int) cardCount);
             setEntity.setCardsSynced(true);
             setEntity.setLastSyncAt(LocalDateTime.now());
@@ -224,20 +280,21 @@ public class CardPersistenceService {
     }
 
     /**
-     * Crée une nouvelle entité carte
+     * NOUVELLE MÉTHODE - Crée une nouvelle entité carte avec UUID
      */
-    private CardEntity createCardEntity(MtgCard mtgCard, String setCode) {
+    private CardEntity createCardEntityWithUUID(MtgCard mtgCard, String setCode) {
         CardEntity cardEntity = new CardEntity();
+        cardEntity.setExternalId(mtgCard.id()); // Stocker l'ancien ID comme externalId
         updateCardEntity(cardEntity, mtgCard);
         cardEntity.setSetCode(setCode);
         return cardEntity;
     }
 
     /**
-     * Met à jour une entité carte
+     * Met à jour une entité carte - VERSION UUID
      */
     private void updateCardEntity(CardEntity cardEntity, MtgCard mtgCard) {
-        cardEntity.setId(mtgCard.id());
+        cardEntity.setExternalId(mtgCard.id()); // Assurer que l'externalId est correct
         cardEntity.setName(mtgCard.name());
         cardEntity.setManaCost(mtgCard.manaCost());
         cardEntity.setCmc(mtgCard.cmc());
@@ -321,56 +378,4 @@ public class CardPersistenceService {
         public long getDistinctArtists() { return distinctArtists; }
         public ImageDownloadService.ImageDownloadStats getImageStats() { return imageStats; }
     }
-
-    // AJOUTER cette méthode dans CardPersistenceService.java
-
-    /**
-     * Méthode pour sauvegarder une liste de cartes (utilisée par ScryfallController)
-     */
-    public int saveCards(List<MtgCard> cards, String setCode) {
-        logger.info("💾 Début de la sauvegarde de {} cartes pour l'extension {}", cards.size(), setCode);
-
-        int savedCount = 0;
-        int updatedCount = 0;
-        int skippedCount = 0;
-
-        for (MtgCard mtgCard : cards) {
-            try {
-                CardEntity result = saveOrUpdateCard(mtgCard, setCode);
-                if (result != null) {
-                    if (cardRepository.existsByIdAndSetCode(mtgCard.id(), setCode)) {
-                        updatedCount++;
-                    } else {
-                        savedCount++;
-                    }
-
-                    // Déclencher le téléchargement de l'image en arrière-plan
-                    if (result.getOriginalImageUrl() != null && !result.getOriginalImageUrl().isEmpty()) {
-                        try {
-                            imageDownloadService.downloadCardImage(result);
-                        } catch (Exception e) {
-                            logger.warn("⚠️ Erreur téléchargement image pour {} : {}", mtgCard.name(), e.getMessage());
-                        }
-                    }
-                } else {
-                    skippedCount++;
-                }
-            } catch (Exception e) {
-                logger.error("❌ Erreur lors de la sauvegarde de la carte {} : {}",
-                        mtgCard.name(), e.getMessage());
-                skippedCount++;
-            }
-        }
-
-        // Mettre à jour les statistiques de l'extension
-        updateSetStatistics(setCode);
-
-        logger.info("✅ Sauvegarde terminée pour {} : {} nouvelles, {} mises à jour, {} ignorées",
-                setCode, savedCount, updatedCount, skippedCount);
-
-        return savedCount + updatedCount;
-    }
-
-
-
 }

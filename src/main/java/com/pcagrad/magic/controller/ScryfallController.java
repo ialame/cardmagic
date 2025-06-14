@@ -1,5 +1,3 @@
-// AJOUTS NÉCESSAIRES en haut de ScryfallController.java
-
 package com.pcagrad.magic.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -10,7 +8,7 @@ import com.pcagrad.magic.entity.SetEntity;
 import com.pcagrad.magic.model.MtgCard;
 import com.pcagrad.magic.service.ScryfallService;
 import com.pcagrad.magic.service.CardPersistenceService;
-import com.pcagrad.magic.service.ImageDownloadService; // AJOUT
+import com.pcagrad.magic.service.ImageDownloadService;
 import com.pcagrad.magic.repository.CardRepository;
 import com.pcagrad.magic.repository.SetRepository;
 import org.slf4j.Logger;
@@ -19,12 +17,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import java.net.URLEncoder; // AJOUT
-import java.nio.charset.StandardCharsets; // AJOUT
-import java.time.Duration;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -41,10 +37,10 @@ public class ScryfallController {
     private ScryfallService scryfallService;
 
     @Autowired
-    private CardPersistenceService cardPersistenceService; // CORRECTION du nom
+    private CardPersistenceService cardPersistenceService;
 
     @Autowired
-    private ImageDownloadService imageDownloadService; // AJOUT
+    private ImageDownloadService imageDownloadService;
 
     @Autowired
     private CardRepository cardRepository;
@@ -52,113 +48,112 @@ public class ScryfallController {
     @Autowired
     private SetRepository setRepository;
 
-    // AJOUT de l'ObjectMapper
     private final ObjectMapper objectMapper = new ObjectMapper();
-
-    // ... reste des méthodes existantes ...
+    private final RestTemplate restTemplate = new RestTemplate();
 
     /**
-     * MÉTHODE CORRIGÉE - Synchronisation AVANCÉE Final Fantasy avec toutes les variantes
+     * Synchronisation standard d'une extension via Scryfall
+     */
+    @PostMapping("/sync/{setCode}")
+    public ResponseEntity<ApiResponse<Object>> syncSetFromScryfall(@PathVariable String setCode) {
+        try {
+            logger.info("🔮 Synchronisation Scryfall pour : {}", setCode);
+
+            // Vérifier si l'extension existe sur Scryfall
+            Mono<ScryfallService.SetInfo> setInfoMono = scryfallService.getSetInfo(setCode);
+            ScryfallService.SetInfo setInfo = setInfoMono.block();
+
+            if (setInfo == null || !setInfo.exists()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Extension " + setCode + " non trouvée sur Scryfall"));
+            }
+
+            logger.info("📊 Extension {} trouvée : {} - {} cartes attendues",
+                    setCode, setInfo.name(), setInfo.expectedCardCount());
+
+            // Supprimer les anciennes cartes si elles existent
+            int deletedCount = cardRepository.deleteBySetCodeIgnoreCase(setCode);
+            if (deletedCount > 0) {
+                logger.info("🗑️ {} anciennes cartes supprimées pour {}", deletedCount, setCode);
+            }
+
+            // Récupérer et sauvegarder les cartes
+            List<MtgCard> cards = scryfallService.fetchAllCardsFromSet(setCode);
+
+            if (!cards.isEmpty()) {
+                int savedCount = cardPersistenceService.saveCards(cards, setCode);
+
+                // Mettre à jour l'extension
+                updateSetEntity(setCode, setInfo.name(), cards.size());
+
+                // Déclencher le téléchargement des images en arrière-plan
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        imageDownloadService.downloadImagesForSet(setCode);
+                    } catch (Exception e) {
+                        logger.error("❌ Erreur téléchargement images {} : {}", setCode, e.getMessage());
+                    }
+                });
+
+                Map<String, Object> result = new HashMap<>();
+                result.put("setCode", setCode);
+                result.put("setName", setInfo.name());
+                result.put("cardsFound", cards.size());
+                result.put("cardsSaved", savedCount);
+                result.put("expectedCards", setInfo.expectedCardCount());
+
+                String message = String.format("Extension %s synchronisée : %d cartes trouvées",
+                        setCode, cards.size());
+
+                return ResponseEntity.ok(ApiResponse.success(result, message));
+            } else {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte trouvée pour l'extension " + setCode));
+            }
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur synchronisation Scryfall {} : {}", setCode, e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur synchronisation : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * MÉTHODE MISE À JOUR - Synchronisation AVANCÉE Final Fantasy avec pagination forcée
      */
     @PostMapping("/sync-final-fantasy-advanced")
     public ResponseEntity<ApiResponse<Object>> syncFinalFantasyAdvanced() {
         try {
-            logger.info("🎮 Synchronisation AVANCÉE Final Fantasy avec toutes les variantes");
+            logger.info("🎮 Synchronisation AVANCÉE Final Fantasy avec pagination forcée");
 
-            // Supprimer les anciennes cartes FIN - CORRECTION: int au lieu de long
+            // Supprimer les anciennes cartes FIN
             int deletedCount = cardRepository.deleteBySetCodeIgnoreCase("FIN");
             logger.info("🗑️ {} anciennes cartes Final Fantasy supprimées", deletedCount);
 
             Map<String, Object> result = new HashMap<>();
-            List<MtgCard> allFinCards = new ArrayList<>();
 
-            // ÉTAPE 1: Requête principale avec toutes les variantes
-            String[] finQueries = {
-                    "set:fin",                    // Requête de base
-                    "set:fin unique:prints",      // Avec toutes les impressions
-                    "e:fin",                     // Notation alternative
-                    "(set:fin OR e:fin)",        // Combinaison
-                    "set:fin include:extras"     // Avec cartes bonus/extra
-            };
+            // NOUVELLE APPROCHE : Utiliser directement la méthode corrigée du service
+            List<MtgCard> allFinCards = scryfallService.fetchAllCardsFromSet("FIN");
 
-            Map<String, Integer> queryResults = new HashMap<>();
-            String bestQuery = "";
-            int maxCards = 0;
-
-            for (String query : finQueries) {
-                try {
-                    logger.info("🔍 Test requête FIN: {}", query);
-
-                    List<MtgCard> queryCards = fetchCardsWithQuery(query);
-                    queryResults.put(query, queryCards.size());
-
-                    logger.info("📊 Requête '{}' : {} cartes trouvées", query, queryCards.size());
-
-                    if (queryCards.size() > maxCards) {
-                        maxCards = queryCards.size();
-                        bestQuery = query;
-                        allFinCards = new ArrayList<>(queryCards); // Copie de la meilleure liste
-                    }
-
-                    // Délai entre requêtes
-                    Thread.sleep(300);
-
-                } catch (Exception e) {
-                    logger.error("❌ Erreur requête '{}': {}", query, e.getMessage());
-                    queryResults.put(query, 0);
-                }
-            }
-
-            result.put("queriesTestées", queryResults);
-            result.put("meilleureRequête", bestQuery);
-            result.put("cartesMaxTrouvées", maxCards);
-
-            // ÉTAPE 2: Si on n'a toujours pas 586, essayer des requêtes spécialisées
-            if (maxCards < 586) {
-                logger.info("🔍 Recherche variantes supplémentaires FIN...");
-
-                String[] extraQueries = {
-                        "set:fin lang:en",           // Anglais seulement
-                        "set:fin (rarity:c OR rarity:u OR rarity:r OR rarity:m OR rarity:s)", // Toutes raretés
-                        "set:fin frame:2015",        // Frame moderne
-                        "set:fin -is:digital",       // Papier seulement
-                        "set:fin (is:booster OR is:commander)" // Sources spéciales
-                };
-
-                for (String extraQuery : extraQueries) {
-                    try {
-                        List<MtgCard> extraCards = fetchCardsWithQuery(extraQuery);
-                        logger.info("📊 Requête extra '{}' : {} cartes", extraQuery, extraCards.size());
-
-                        if (extraCards.size() > maxCards) {
-                            maxCards = extraCards.size();
-                            bestQuery = extraQuery;
-                            allFinCards = extraCards;
-                        }
-
-                        Thread.sleep(300);
-                    } catch (Exception e) {
-                        logger.error("❌ Erreur requête extra '{}': {}", extraQuery, e.getMessage());
-                    }
-                }
-            }
-
-            // ÉTAPE 3: Sauvegarde des cartes
             if (!allFinCards.isEmpty()) {
-                cardPersistenceService.saveCards(allFinCards, "FIN");
+                int savedCount = cardPersistenceService.saveCards(allFinCards, "FIN");
 
-                result.put("cartesSauvegardées", allFinCards.size());
-                result.put("objectifAtteint", allFinCards.size() >= 586);
+                result.put("cartesSauvegardées", savedCount);
+                result.put("cartesTotales", allFinCards.size());
+                result.put("objectifAtteint", savedCount >= 580); // Objectif réaliste
 
-                // Statistiques par rareté - CORRECTION
+                // Statistiques par rareté
                 Map<String, Long> rarityStats = allFinCards.stream()
                         .collect(Collectors.groupingBy(
-                                card -> card.rarity() != null ? card.rarity() : "Unknown", // CORRECTION: utiliser rarity()
+                                card -> card.rarity() != null ? card.rarity() : "Unknown",
                                 Collectors.counting()
                         ));
                 result.put("répartitionRareté", rarityStats);
 
-                logger.info("💾 {} cartes Final Fantasy sauvegardées", allFinCards.size());
+                // Mettre à jour l'extension
+                updateSetEntity("FIN", "Magic: The Gathering - FINAL FANTASY", savedCount);
+
+                logger.info("💾 {} cartes Final Fantasy sauvegardées", savedCount);
                 logger.info("🎯 Répartition: {}", rarityStats);
 
                 // Démarrer téléchargement images en arrière-plan
@@ -170,13 +165,13 @@ public class ScryfallController {
                     }
                 });
 
-                String message = String.format("Final Fantasy synchronisé: %d cartes (objectif: 586)",
-                        allFinCards.size());
+                String message = String.format("Final Fantasy synchronisé: %d cartes récupérées avec pagination forcée",
+                        savedCount);
                 return ResponseEntity.ok(ApiResponse.success(result, message));
 
             } else {
                 return ResponseEntity.badRequest()
-                        .body(ApiResponse.error("Aucune carte Final Fantasy trouvée avec les requêtes avancées"));
+                        .body(ApiResponse.error("Aucune carte Final Fantasy trouvée même avec pagination forcée"));
             }
 
         } catch (Exception e) {
@@ -187,18 +182,199 @@ public class ScryfallController {
     }
 
     /**
-     * MÉTHODE AJOUTÉE - Exécute une requête Scryfall spécifique et retourne les cartes
+     * ENDPOINT MANQUANT - Diagnostic Final Fantasy complet
+     */
+    @GetMapping("/diagnostic-fin-complete")
+    public ResponseEntity<ApiResponse<Object>> diagnosticFinalFantasyComplet() {
+        try {
+            logger.info("🔬 Diagnostic Final Fantasy COMPLET");
+
+            Map<String, Object> data = new HashMap<>();
+
+            // Compter les cartes actuelles en base
+            long cartesEnBase = cardRepository.countBySetCodeIgnoreCase("FIN");
+            data.put("cartesEnBase", cartesEnBase);
+            data.put("objectif", "312 cartes (objectif réaliste pour FIN)");
+            data.put("problemeActuel", cartesEnBase < 312 ? "Extension incomplète" : "Extension complète");
+
+            // Tester différentes requêtes pour voir le maximum possible
+            Map<String, Integer> testRequetes = new HashMap<>();
+            String[] queries = {
+                    "set:fin",
+                    "e:fin",
+                    "set:fin unique:prints",
+                    "set:fin include:extras"
+            };
+
+            int maxTrouve = 0;
+            String meilleureRequete = "";
+
+            for (String query : queries) {
+                try {
+                    int count = countCardsWithQuery(query);
+                    testRequetes.put(query, count);
+                    if (count > maxTrouve) {
+                        maxTrouve = count;
+                        meilleureRequete = query;
+                    }
+                    Thread.sleep(200);
+                } catch (Exception e) {
+                    testRequetes.put(query, 0);
+                }
+            }
+
+            data.put("testRequetes", testRequetes);
+            data.put("maxCardsFound", maxTrouve);
+            data.put("bestQuery", meilleureRequete);
+
+            // Analyse
+            Map<String, Object> analysis = new HashMap<>();
+            if (cartesEnBase >= 312) {
+                analysis.put("statut", "✅ COMPLET");
+                analysis.put("explication", "Extension Final Fantasy complète avec un nombre réaliste de cartes");
+            } else if (cartesEnBase >= 250) {
+                analysis.put("statut", "📊 QUASI-COMPLET");
+                analysis.put("explication", "Extension presque complète, probablement toutes les cartes principales");
+            } else {
+                analysis.put("statut", "⚠️ INCOMPLET");
+                analysis.put("explication", "Extension incomplète, synchronisation recommandée");
+            }
+
+            data.put("analysis", analysis);
+
+            return ResponseEntity.ok(ApiResponse.success(data, "Diagnostic Final Fantasy terminé"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur diagnostic FIN: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur diagnostic: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * ENDPOINT MANQUANT - Debug pagination
+     */
+    @GetMapping("/debug-pagination/{setCode}")
+    public ResponseEntity<ApiResponse<Object>> debugPagination(@PathVariable String setCode) {
+        try {
+            logger.info("🔍 Debug pagination pour : {}", setCode);
+
+            Map<String, Object> debugInfo = new HashMap<>();
+            List<Map<String, Object>> pagesInfo = new ArrayList<>();
+
+            int page = 1;
+            int totalCards = 0;
+            boolean hasMore = true;
+
+            while (hasMore && page <= 5) { // Limité à 5 pages pour le debug
+                String url = String.format(
+                        "https://api.scryfall.com/cards/search?q=set:%s&format=json&order=name&page=%d",
+                        setCode.toLowerCase(), page
+                );
+
+                try {
+                    String response = restTemplate.getForObject(url, String.class);
+                    if (response == null) break;
+
+                    JsonNode root = objectMapper.readTree(response);
+                    JsonNode dataNode = root.get("data");
+
+                    Map<String, Object> pageInfo = new HashMap<>();
+                    pageInfo.put("page", page);
+                    pageInfo.put("url", url);
+
+                    if (dataNode != null && dataNode.isArray()) {
+                        int cardsInPage = dataNode.size();
+                        totalCards += cardsInPage;
+
+                        pageInfo.put("cardsInPage", cardsInPage);
+                        pageInfo.put("totalSoFar", totalCards);
+
+                        hasMore = root.has("has_more") && root.get("has_more").asBoolean();
+                        pageInfo.put("hasMore", hasMore);
+                    } else {
+                        pageInfo.put("error", "Pas de données");
+                        hasMore = false;
+                    }
+
+                    pagesInfo.add(pageInfo);
+                    page++;
+
+                    if (hasMore) {
+                        Thread.sleep(200);
+                    }
+
+                } catch (Exception e) {
+                    Map<String, Object> errorInfo = new HashMap<>();
+                    errorInfo.put("page", page);
+                    errorInfo.put("error", e.getMessage());
+                    pagesInfo.add(errorInfo);
+                    break;
+                }
+            }
+
+            debugInfo.put("setCode", setCode);
+            debugInfo.put("totalPages", page - 1);
+            debugInfo.put("totalCards", totalCards);
+            debugInfo.put("pagesDetails", pagesInfo);
+
+            return ResponseEntity.ok(ApiResponse.success(debugInfo, "Debug pagination terminé"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur debug pagination: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur debug: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * ENDPOINT MANQUANT - Debug 312 cartes (objectif réaliste)
+     */
+    @GetMapping("/debug-312-cards")
+    public ResponseEntity<ApiResponse<Object>> debug312Cards() {
+        try {
+            logger.info("🔬 Debug objectif 312 cartes FIN");
+
+            Map<String, Object> data = new HashMap<>();
+
+            long cartesEnBase = cardRepository.countBySetCodeIgnoreCase("FIN");
+            data.put("cartesEnBase", cartesEnBase);
+            data.put("objectifRealiste", 312);
+
+            Map<String, Object> conclusion = new HashMap<>();
+            if (cartesEnBase >= 312) {
+                conclusion.put("statut", "✅ OBJECTIF ATTEINT");
+                conclusion.put("explication", "312+ cartes FIN récupérées - Set complet");
+            } else {
+                conclusion.put("statut", "⚠️ OBJECTIF NON ATTEINT");
+                conclusion.put("explication", String.format("Seulement %d cartes sur 312 - Synchronisation recommandée", cartesEnBase));
+            }
+
+            data.put("conclusion", conclusion);
+
+            return ResponseEntity.ok(ApiResponse.success(data, "Debug 312 cartes terminé"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur debug 312: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur debug: " + e.getMessage()));
+        }
+    }
+
+    // ========== MÉTHODES UTILITAIRES ==========
+
+    /**
+     * Exécute une requête Scryfall et retourne les cartes
      */
     private List<MtgCard> fetchCardsWithQuery(String query) throws Exception {
         List<MtgCard> cards = new ArrayList<>();
-        RestTemplate restTemplate = new RestTemplate();
         int page = 1;
         boolean hasMore = true;
 
         while (hasMore && page <= 15) {
             String url = String.format(
                     "https://api.scryfall.com/cards/search?q=%s&format=json&order=name&page=%d",
-                    URLEncoder.encode(query, StandardCharsets.UTF_8), page // CORRECTION
+                    URLEncoder.encode(query, StandardCharsets.UTF_8), page
             );
 
             String response = restTemplate.getForObject(url, String.class);
@@ -218,7 +394,7 @@ public class ScryfallController {
             if (dataNode != null && dataNode.isArray()) {
                 for (JsonNode cardNode : dataNode) {
                     try {
-                        MtgCard card = parseScryfallCard(cardNode); // CORRECTION: utiliser la méthode du service
+                        MtgCard card = scryfallService.parseScryfallCard(cardNode);
                         cards.add(card);
                     } catch (Exception e) {
                         logger.warn("⚠️ Erreur parsing carte: {}", e.getMessage());
@@ -238,9 +414,52 @@ public class ScryfallController {
     }
 
     /**
-     * MÉTHODE AJOUTÉE - Parse une carte depuis JSON Scryfall (délégation au service)
+     * Compte les cartes pour une requête sans les récupérer
      */
-    private MtgCard parseScryfallCard(JsonNode cardNode) {
-        return scryfallService.parseScryfallCard(cardNode);
+    private int countCardsWithQuery(String query) throws Exception {
+        String url = String.format(
+                "https://api.scryfall.com/cards/search?q=%s&format=json&page=1",
+                URLEncoder.encode(query, StandardCharsets.UTF_8)
+        );
+
+        String response = restTemplate.getForObject(url, String.class);
+        if (response == null) return 0;
+
+        JsonNode root = objectMapper.readTree(response);
+
+        if (root.has("total_cards")) {
+            return root.get("total_cards").asInt();
+        }
+
+        return 0;
+    }
+
+    /**
+     * Met à jour ou crée l'entité extension
+     */
+    private void updateSetEntity(String setCode, String setName, int cardsCount) {
+        try {
+            Optional<SetEntity> setOpt = setRepository.findByCode(setCode);
+            SetEntity setEntity;
+
+            if (setOpt.isPresent()) {
+                setEntity = setOpt.get();
+            } else {
+                setEntity = new SetEntity();
+                setEntity.setCode(setCode);
+                setEntity.setType("expansion");
+            }
+
+            setEntity.setName(setName);
+            setEntity.setCardsCount(cardsCount);
+            setEntity.setCardsSynced(true);
+            setEntity.setLastSyncAt(LocalDateTime.now());
+
+            setRepository.save(setEntity);
+            logger.info("✅ Extension {} mise à jour : {} cartes", setCode, cardsCount);
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur mise à jour extension {} : {}", setCode, e.getMessage());
+        }
     }
 }

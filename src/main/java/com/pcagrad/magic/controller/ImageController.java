@@ -13,6 +13,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import com.pcagrad.magic.service.BackupService;
+
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import java.util.Optional;
@@ -37,7 +39,7 @@ public class ImageController {
      * Sert une image de carte par son ID
      */
     @GetMapping("/{cardId}")
-    public ResponseEntity<Resource> getCardImage(@PathVariable String cardId) {
+    public ResponseEntity<Resource> getCardImage(@PathVariable UUID cardId) {
         try {
             Optional<CardEntity> cardOpt = cardRepository.findById(cardId);
             if (cardOpt.isEmpty()) {
@@ -83,7 +85,7 @@ public class ImageController {
      * Déclenche le téléchargement d'une image spécifique
      */
     @PostMapping("/{cardId}/download")
-    public ResponseEntity<String> downloadCardImage(@PathVariable String cardId) {
+    public ResponseEntity<String> downloadCardImage(@PathVariable UUID cardId) {
         try {
             Optional<CardEntity> cardOpt = cardRepository.findById(cardId);
             if (cardOpt.isEmpty()) {

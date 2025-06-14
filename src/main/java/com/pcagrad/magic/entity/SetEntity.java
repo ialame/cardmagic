@@ -3,6 +3,7 @@ package com.pcagrad.magic.entity;
 import jakarta.persistence.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "sets", indexes = {
@@ -14,6 +15,12 @@ import java.time.LocalDateTime;
 public class SetEntity {
 
     @Id
+    @GeneratedValue
+    @Column(name = "id", updatable = false, nullable = false)
+    private UUID id;
+
+    // Le code reste unique et sert de clé métier
+    @Column(name = "code", nullable = false, unique = true, length = 10)
     private String code;
 
     @Column(nullable = false)
@@ -73,6 +80,9 @@ public class SetEntity {
     }
 
     // Getters et Setters
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
+
     public String getCode() { return code; }
     public void setCode(String code) { this.code = code; }
 

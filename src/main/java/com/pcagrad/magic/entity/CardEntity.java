@@ -3,18 +3,26 @@ package com.pcagrad.magic.entity;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Entity
 @Table(name = "cards", indexes = {
         @Index(name = "idx_card_name", columnList = "name"),
         @Index(name = "idx_card_set", columnList = "setCode"),
         @Index(name = "idx_card_rarity", columnList = "rarity"),
-        @Index(name = "idx_card_type", columnList = "type")
+        @Index(name = "idx_card_type", columnList = "type"),
+        @Index(name = "idx_card_external_id", columnList = "externalId") // Nouvel index pour l'ID externe
 })
 public class CardEntity {
 
     @Id
-    private String id;
+    @GeneratedValue
+    @Column(name = "id", updatable = false, nullable = false)
+    private UUID id;
+
+    // Nouveau champ pour stocker l'ID externe (MTG API ou Scryfall)
+    @Column(name = "external_id", length = 100)
+    private String externalId;
 
     @Column(nullable = false)
     private String name;
@@ -98,9 +106,9 @@ public class CardEntity {
         this.updatedAt = LocalDateTime.now();
     }
 
-    public CardEntity(String id, String name, String setCode) {
+    public CardEntity(String externalId, String name, String setCode) {
         this();
-        this.id = id;
+        this.externalId = externalId;
         this.name = name;
         this.setCode = setCode;
     }
@@ -112,8 +120,11 @@ public class CardEntity {
     }
 
     // Getters et Setters
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
+
+    public String getExternalId() { return externalId; }
+    public void setExternalId(String externalId) { this.externalId = externalId; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }

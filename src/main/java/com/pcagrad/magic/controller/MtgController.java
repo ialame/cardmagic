@@ -52,6 +52,164 @@ public class MtgController {
 
     private ScryfallService scryfallService;
 
+    // ENDPOINT DE DEBUG POUR RETROUVER FIN
+// Ajoutez cet endpoint dans MtgController.java
+
+    @GetMapping("/debug/find-fin")
+    public ResponseEntity<ApiResponse<Object>> debugFindFin() {
+        try {
+            logger.info("🔍 DEBUG - Recherche extension FIN après migration UUID");
+
+            Map<String, Object> debugInfo = new HashMap<>();
+
+            // 1. Compter toutes les extensions
+            long totalSets = setRepository.count();
+            debugInfo.put("totalSetsInDb", totalSets);
+
+            // 2. Rechercher FIN par code (nouvelle méthode)
+            Optional<SetEntity> finByCode = setRepository.findByCode("FIN");
+            debugInfo.put("finFoundByCode", finByCode.isPresent());
+
+            if (finByCode.isPresent()) {
+                SetEntity fin = finByCode.get();
+                Map<String, Object> finInfo = new HashMap<>();
+                finInfo.put("uuid", fin.getId().toString());
+                finInfo.put("code", fin.getCode());
+                finInfo.put("name", fin.getName());
+                finInfo.put("type", fin.getType());
+                finInfo.put("releaseDate", fin.getReleaseDate());
+                finInfo.put("cardsSynced", fin.getCardsSynced());
+                finInfo.put("cardsCount", fin.getCardsCount());
+                debugInfo.put("finDetails", finInfo);
+
+                // Compter les cartes FIN
+                long cardsCount = cardRepository.countBySetCode("FIN");
+                debugInfo.put("cardsInDbForFin", cardsCount);
+            }
+
+            // 3. Rechercher toutes les extensions qui contiennent "FIN"
+            List<SetEntity> setsWithFin = setRepository.findByNameContainingIgnoreCaseOrderByReleaseDateDesc("FINAL");
+            debugInfo.put("setsContainingFinal", setsWithFin.size());
+
+            List<Map<String, Object>> finLikeSets = setsWithFin.stream()
+                    .map(set -> {
+                        Map<String, Object> setInfo = new HashMap<>();
+                        setInfo.put("uuid", set.getId().toString());
+                        setInfo.put("code", set.getCode());
+                        setInfo.put("name", set.getName());
+                        return setInfo;
+                    })
+                    .collect(Collectors.toList());
+            debugInfo.put("setsWithFinalInName", finLikeSets);
+
+            // 4. Lister les 10 dernières extensions par date
+            List<SetEntity> recentSets = setRepository.findLatestSets();
+            List<Map<String, Object>> recentSetsInfo = recentSets.stream()
+                    .limit(10)
+                    .map(set -> {
+                        Map<String, Object> setInfo = new HashMap<>();
+                        setInfo.put("code", set.getCode());
+                        setInfo.put("name", set.getName());
+                        setInfo.put("releaseDate", set.getReleaseDate());
+                        setInfo.put("cardsCount", set.getCardsCount());
+                        return setInfo;
+                    })
+                    .collect(Collectors.toList());
+            debugInfo.put("recent10Sets", recentSetsInfo);
+
+            return ResponseEntity.ok(ApiResponse.success(debugInfo, "Debug FIN terminé"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur debug FIN : {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur debug : " + e.getMessage()));
+        }
+    }
+
+    // ENDPOINT POUR RECRÉER FIN SI NÉCESSAIRE
+    @PostMapping("/debug/recreate-fin")
+    public ResponseEntity<ApiResponse<String>> recreateFin() {
+        try {
+            logger.info("🎮 Re-création de l'extension Final Fantasy");
+
+            // Vérifier si FIN existe déjà
+            Optional<SetEntity> existingFin = setRepository.findByCode("FIN");
+            if (existingFin.isPresent()) {
+                return ResponseEntity.ok(ApiResponse.success(
+                        "Extension FIN existe déjà avec UUID: " + existingFin.get().getId(),
+                        "Pas besoin de recréer"
+                ));
+            }
+
+            // Créer nouvelle extension FIN
+            SetEntity finSet = new SetEntity();
+            finSet.setCode("FIN");
+            finSet.setName("Magic: The Gathering - FINAL FANTASY");
+            finSet.setType("expansion");
+            finSet.setReleaseDate(LocalDate.of(2025, 6, 13));
+            finSet.setCardsSynced(false);
+            finSet.setCardsCount(0);
+
+            SetEntity savedFin = setRepository.save(finSet);
+
+            logger.info("✅ Extension FIN recréée avec UUID : {}", savedFin.getId());
+
+            return ResponseEntity.ok(ApiResponse.success(
+                    "Extension FIN recréée avec UUID: " + savedFin.getId(),
+                    "Prête pour synchronisation"
+            ));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur recréation FIN : {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur recréation : " + e.getMessage()));
+        }
+    }
+
+// CORRECTION DANS getLatestSet() pour gérer le fallback FIN
+// Dans MtgService.java, corrigez cette partie :
+
+    public Mono<MtgSet> getLatestSet() {
+        logger.debug("🔍 Récupération de la dernière extension");
+
+        // Chercher d'abord en base avec priorité aux extensions avec cartes
+        List<SetEntity> allSets = setRepository.findLatestSets();
+
+        if (!allSets.isEmpty()) {
+            // ... logique existante ...
+        }
+
+        // CORRECTION : Fallback vers FIN avec findByCode au lieu de findById
+        Optional<SetEntity> finFallback = setRepository.findByCode("FIN");
+        if (finFallback.isPresent() && finFallback.get().getCardsSynced()) {
+            logger.info("🎯 Fallback vers FIN (Final Fantasy) qui a des cartes synchronisées");
+            return Mono.just(entityToModel(finFallback.get()));
+        }
+
+        // ... reste de la méthode
+    }
+
+// SQL DIRECT pour vérifier en base si nécessaire :
+/*
+-- Vérifier les extensions en base
+SELECT BIN_TO_UUID(id) as uuid_id, code, name, cards_count, cards_synced
+FROM sets
+WHERE code = 'FIN' OR name LIKE '%FINAL%';
+
+-- Compter les cartes FIN
+SELECT COUNT(*) as fin_cards
+FROM cards
+WHERE set_code = 'FIN';
+
+-- Lister toutes les extensions récentes
+SELECT code, name, release_date, cards_count
+FROM sets
+ORDER BY release_date DESC
+LIMIT 10;
+*/
+
+    /// ///////////////////
+
     @GetMapping("/sets")
     public Mono<ResponseEntity<ApiResponse<List<MtgSet>>>> getAllSets() {
         return mtgService.getAllSets()
@@ -60,19 +218,7 @@ public class MtgController {
                         .body(ApiResponse.error("Erreur lors de la récupération des extensions")));
     }
 
-    @GetMapping("/sets/latest")
-    public Mono<ResponseEntity<ApiResponse<MtgSet>>> getLatestSet() {
-        return mtgService.getLatestSet()
-                .map(set -> {
-                    if (set != null) {
-                        return ResponseEntity.ok(ApiResponse.success(set, "Dernière extension récupérée avec succès"));
-                    } else {
-                        return ResponseEntity.notFound().<ApiResponse<MtgSet>>build();
-                    }
-                })
-                .onErrorReturn(ResponseEntity.badRequest()
-                        .body(ApiResponse.error("Erreur lors de la récupération de la dernière extension")));
-    }
+
 
     @GetMapping("/sets/latest/cards")
     public Mono<ResponseEntity<ApiResponse<MtgSet>>> getLatestSetWithCards() {
@@ -397,7 +543,7 @@ public class MtgController {
             logger.info("🔧 Correction de l'encodage Final Fantasy");
 
             // Supprimer l'ancienne entrée
-            setRepository.deleteById("FIN");
+            setRepository.deleteByCode("FIN");
 
             // Recréer avec le bon encodage
             SetEntity finalFantasySet = new SetEntity();

@@ -22,6 +22,7 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
@@ -40,7 +41,6 @@ public class MtgService {
     @Autowired
     private CardPersistenceService persistenceService;
 
-    // AJOUTER cette injection de dépendance en haut de la classe MtgService
     @Autowired
     private ScryfallService scryfallService;
 
@@ -52,6 +52,14 @@ public class MtgService {
                 .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
                 .build();
     }
+
+    /**
+     * Extensions qui n'existent que sur Scryfall (Universes Beyond)
+     */
+    private static final Set<String> SCRYFALL_ONLY_SETS = Set.of(
+            "FIN", "FIC", "FCA", "TFIN", "TFIC", "RFIN", // Final Fantasy
+            "WHO", "TWD", "SLD", "UNF" // Autres Universes Beyond
+    );
 
     /**
      * Récupère toutes les extensions (hybride: DB + API)
@@ -145,6 +153,7 @@ public class MtgService {
                     }
                 });
     }
+
     /**
      * Détermine si un type d'extension doit être exclu
      */
@@ -170,7 +179,6 @@ public class MtgService {
             LocalDate twoYearsAgo = now.minusYears(2);
             LocalDate oneMonthFuture = now.plusMonths(1);
 
-            // Accepter les extensions des 2 dernières années et jusqu'à 1 mois dans le futur
             return releaseDate.isAfter(twoYearsAgo) && releaseDate.isBefore(oneMonthFuture);
         } catch (Exception e) {
             logger.warn("⚠️ Date invalide : {}", releaseDateStr);
@@ -185,7 +193,6 @@ public class MtgService {
         try {
             return LocalDate.parse(releaseDateStr);
         } catch (Exception e) {
-            // Essayer d'autres formats si nécessaire
             throw new IllegalArgumentException("Format de date invalide : " + releaseDateStr);
         }
     }
@@ -212,34 +219,46 @@ public class MtgService {
     }
 
     /**
-     * Récupère les cartes d'une extension (hybride)
+     * MÉTHODE UNIFIÉE - Récupère les cartes d'une extension
+     * Utilise Scryfall pour les sets Universes Beyond, MTG API pour le reste
      */
     public Mono<List<MtgCard>> getCardsFromSet(String setCode) {
-        logger.debug("🔍 Récupération des cartes pour l'extension : {}", setCode);
+        logger.info("🔍 Récupération des cartes pour l'extension: {}", setCode);
 
-        // D'abord vérifier si les cartes sont en base et à jour
-        if (persistenceService.isSetSynced(setCode)) {
-            List<CardEntity> dbCards = persistenceService.getCardsFromDatabase(setCode);
-            if (!dbCards.isEmpty()) {
-                logger.debug("✅ {} cartes trouvées en base pour {}", dbCards.size(), setCode);
-                List<MtgCard> mtgCards = dbCards.stream()
-                        .map(this::entityToModel)
-                        .collect(Collectors.toList());
-                return Mono.just(mtgCards);
-            }
+        // Vérifier d'abord en base de données
+        List<CardEntity> cardsInDb = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+        if (!cardsInDb.isEmpty()) {
+            logger.info("✅ {} cartes trouvées en base pour {}", cardsInDb.size(), setCode);
+            List<MtgCard> cards = cardsInDb.stream()
+                    .map(this::entityToModel)
+                    .collect(Collectors.toList());
+            return Mono.just(cards);
         }
 
-        // Sinon récupérer depuis l'API et sauvegarder
-        logger.info("🌐 Récupération des cartes depuis l'API pour : {}", setCode);
-        return fetchCardsFromApi(setCode)
-                .doOnNext(cards -> {
-                    if (!cards.isEmpty()) {
-                        logger.info("💾 Sauvegarde de {} cartes en base pour {}", cards.size(), setCode);
-                        persistenceService.saveCardsForSet(setCode, cards);
-                    } else {
-                        logger.warn("⚠️ Aucune carte trouvée pour l'extension {}", setCode);
-                    }
-                });
+        // Si le set n'existe que sur Scryfall, utiliser ScryfallService
+        if (SCRYFALL_ONLY_SETS.contains(setCode.toUpperCase())) {
+            logger.info("🔮 Extension {} détectée comme Universes Beyond - utilisation de Scryfall", setCode);
+            return scryfallService.getCardsFromScryfall(setCode)
+                    .doOnNext(cards -> {
+                        if (!cards.isEmpty()) {
+                            logger.info("✅ {} cartes récupérées depuis Scryfall pour {}", cards.size(), setCode);
+                            // Sauvegarder en arrière-plan
+                            CompletableFuture.runAsync(() -> {
+                                try {
+                                    persistenceService.saveCardsForSet(setCode, cards);
+                                } catch (Exception e) {
+                                    logger.error("❌ Erreur sauvegarde {} : {}", setCode, e.getMessage());
+                                }
+                            });
+                        } else {
+                            logger.warn("⚠️ Aucune carte Scryfall trouvée pour {}", setCode);
+                        }
+                    });
+        }
+
+        // Sinon, utiliser l'API MTG classique
+        logger.info("🌐 Récupération depuis l'API MTG officielle pour : {}", setCode);
+        return fetchCardsFromMtgApi(setCode);
     }
 
     /**
@@ -269,134 +288,70 @@ public class MtgService {
     }
 
     /**
-     * Récupère la dernière extension avec logique intelligente
-     * 1. Cherche la vraie dernière extension
-     * 2. Si pas de cartes, essaie de les synchroniser
-     * 3. Si échec, prend la dernière extension AVEC cartes
+     * MÉTHODE UNIFIÉE - Récupère la dernière extension avec cartes
      */
     public Mono<MtgSet> getLatestSetWithCards() {
+        logger.debug("🔍 Récupération de la dernière extension avec cartes");
+
+        // Chercher d'abord en base avec priorité aux extensions avec cartes
+        List<SetEntity> recentSets = setRepository.findLatestSets();
+
+        if (!recentSets.isEmpty()) {
+            // Prendre la première extension qui a des cartes
+            Optional<SetEntity> setWithCards = recentSets.stream()
+                    .filter(set -> {
+                        long cardCount = cardRepository.countBySetCode(set.getCode());
+                        return cardCount > 0;
+                    })
+                    .findFirst();
+
+            if (setWithCards.isPresent()) {
+                SetEntity setEntity = setWithCards.get();
+                logger.info("✅ Dernière extension trouvée en base : {} ({}) - {} cartes",
+                        setEntity.getName(), setEntity.getCode(),
+                        cardRepository.countBySetCode(setEntity.getCode()));
+
+                // Récupérer les cartes
+                return getCardsFromSet(setEntity.getCode())
+                        .map(cards -> {
+                            MtgSet mtgSet = entityToModel(setEntity);
+                            return new MtgSet(
+                                    mtgSet.code(),
+                                    mtgSet.name(),
+                                    mtgSet.type(),
+                                    mtgSet.block(),
+                                    mtgSet.releaseDate(),
+                                    mtgSet.gathererCode(),
+                                    mtgSet.magicCardsInfoCode(),
+                                    mtgSet.border(),
+                                    mtgSet.onlineOnly(),
+                                    cards // Ajouter les cartes
+                            );
+                        });
+            }
+        }
+
+        // Si aucune extension en base, récupérer depuis les APIs
+        logger.info("🌐 Aucune extension récente en base, récupération depuis les APIs");
         return getLatestSet()
                 .flatMap(latestSet -> {
                     if (latestSet == null) {
-                        logger.warn("⚠️ Aucune dernière extension trouvée");
                         return Mono.just(null);
                     }
-
-                    logger.info("🎯 Dernière extension détectée : {} ({})",
-                            latestSet.name(), latestSet.code());
-
-                    // Vérifier si elle a déjà des cartes
                     return getCardsFromSet(latestSet.code())
-                            .flatMap(cards -> {
-                                if (!cards.isEmpty()) {
-                                    logger.info("✅ {} cartes trouvées pour {}", cards.size(), latestSet.code());
-                                    return Mono.just(new MtgSet(
-                                            latestSet.code(),
-                                            latestSet.name(),
-                                            latestSet.type(),
-                                            latestSet.block(),
-                                            latestSet.releaseDate(),
-                                            latestSet.gathererCode(),
-                                            latestSet.magicCardsInfoCode(),
-                                            latestSet.border(),
-                                            latestSet.onlineOnly(),
-                                            cards
-                                    ));
-                                } else {
-                                    // Pas de cartes pour la dernière extension, chercher la dernière AVEC cartes
-                                    logger.warn("⚠️ Extension {} n'a pas de cartes, recherche d'une extension avec cartes...",
-                                            latestSet.code());
-
-                                    return getLatestSetWithSyncedCards()
-                                            .flatMap(fallbackSet -> {
-                                                if (fallbackSet != null) {
-                                                    logger.info("🔄 Fallback vers {} qui a des cartes", fallbackSet.code());
-                                                    return getCardsFromSet(fallbackSet.code())
-                                                            .map(fallbackCards -> new MtgSet(
-                                                                    fallbackSet.code(),
-                                                                    fallbackSet.name(),
-                                                                    fallbackSet.type(),
-                                                                    fallbackSet.block(),
-                                                                    fallbackSet.releaseDate(),
-                                                                    fallbackSet.gathererCode(),
-                                                                    fallbackSet.magicCardsInfoCode(),
-                                                                    fallbackSet.border(),
-                                                                    fallbackSet.onlineOnly(),
-                                                                    fallbackCards
-                                                            ));
-                                                } else {
-                                                    return Mono.just(null);
-                                                }
-                                            });
-                                }
-                            });
+                            .map(cards -> new MtgSet(
+                                    latestSet.code(),
+                                    latestSet.name(),
+                                    latestSet.type(),
+                                    latestSet.block(),
+                                    latestSet.releaseDate(),
+                                    latestSet.gathererCode(),
+                                    latestSet.magicCardsInfoCode(),
+                                    latestSet.border(),
+                                    latestSet.onlineOnly(),
+                                    cards
+                            ));
                 });
-    }
-
-    /**
-     * Trouve la dernière extension qui a des cartes synchronisées
-     */
-    private Mono<MtgSet> getLatestSetWithSyncedCards() {
-        List<SetEntity> setsWithCards = setRepository.findLatestSets().stream()
-                .filter(set -> set.getReleaseDate() != null)
-                .filter(set -> !isExcludedSetType(set.getType()))
-                .filter(set -> set.getCardsSynced() && set.getCardsCount() != null && set.getCardsCount() > 0)
-                .filter(set -> set.getReleaseDate().isBefore(LocalDate.now().plusDays(1))) // Pas trop dans le futur
-                .sorted((a, b) -> b.getReleaseDate().compareTo(a.getReleaseDate())) // Plus récent en premier
-                .collect(Collectors.toList());
-
-        if (!setsWithCards.isEmpty()) {
-            SetEntity latestWithCards = setsWithCards.get(0);
-            logger.info("📦 Extension avec cartes la plus récente : {} ({}) - {} cartes",
-                    latestWithCards.getName(), latestWithCards.getCode(), latestWithCards.getCardsCount());
-            return Mono.just(entityToModel(latestWithCards));
-        }
-
-        return Mono.just(null);
-    }
-
-    /**
-     * Endpoint pour vérifier le statut de synchronisation de FIN
-     */
-    @GetMapping("/debug/fin-status")
-    public ResponseEntity<ApiResponse<Object>> checkFINStatus() {
-        try {
-            Optional<SetEntity> finSet = setRepository.findByCode("FIN");
-            if (finSet.isEmpty()) {
-                return ResponseEntity.notFound().build();
-            }
-
-            SetEntity fin = finSet.get();
-            long cardCount = cardRepository.countBySetCode("FIN");
-
-            Map<String, Object> status = new HashMap<>();
-            status.put("code", fin.getCode());
-            status.put("name", fin.getName());
-            status.put("releaseDate", fin.getReleaseDate());
-            status.put("cardsSynced", fin.getCardsSynced());
-            status.put("cardsCount", cardCount);
-            status.put("type", fin.getType());
-
-            // Vérifier si c'est aujourd'hui
-            boolean isToday = fin.getReleaseDate().equals(LocalDate.now());
-            status.put("isReleasedToday", isToday);
-
-            String message;
-            if (isToday && cardCount == 0) {
-                message = "Extension sortie aujourd'hui mais cartes pas encore synchronisées";
-            } else if (cardCount > 0) {
-                message = "Extension avec " + cardCount + " cartes synchronisées";
-            } else {
-                message = "Extension sans cartes synchronisées";
-            }
-
-            return ResponseEntity.ok(ApiResponse.success(status, message));
-
-        } catch (Exception e) {
-            logger.error("❌ Erreur vérification FIN : {}", e.getMessage());
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
-        }
     }
 
     /**
@@ -405,7 +360,7 @@ public class MtgService {
     public Mono<MtgSet> forceSyncSet(String setCode) {
         logger.info("🔄 Synchronisation forcée de l'extension : {}", setCode);
 
-        return fetchCardsFromApi(setCode)
+        return getCardsFromSet(setCode)
                 .flatMap(cards -> {
                     if (cards.isEmpty()) {
                         logger.warn("⚠️ Aucune carte trouvée pour l'extension {}", setCode);
@@ -449,53 +404,59 @@ public class MtgService {
                 .doOnError(error -> logger.error("❌ Erreur lors de la récupération des extensions : {}", error.getMessage()));
     }
 
-    private Mono<List<MtgCard>> fetchCardsFromApi(String setCode) {
+    /**
+     * Récupère les cartes depuis l'API MTG classique
+     */
+    private Mono<List<MtgCard>> fetchCardsFromMtgApi(String setCode) {
         String url = baseUrl + "/cards?set=" + setCode + "&pageSize=500";
-        logger.debug("🌐 URL appelée: {}", url);
 
         return webClient.get()
                 .uri(url)
                 .retrieve()
                 .bodyToMono(String.class)
-                .map(body -> {
+                .timeout(Duration.ofSeconds(30))
+                .map(response -> {
                     try {
-                        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                        com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(body);
-                        com.fasterxml.jackson.databind.JsonNode cardsNode = root.get("cards");
+                        JsonNode root = new ObjectMapper().readTree(response);
+                        JsonNode cardsArray = root.get("cards");
 
-                        if (cardsNode == null || !cardsNode.isArray()) {
-                            logger.warn("⚠️ Pas de tableau 'cards' dans la réponse pour {}", setCode);
-                            return Collections.<MtgCard>emptyList();
-                        }
-
-                        List<MtgCard> cards = new ArrayList<>();
-                        for (com.fasterxml.jackson.databind.JsonNode cardNode : cardsNode) {
-                            try {
-                                MtgCard card = mapJsonToMtgCard(cardNode, setCode);
-                                cards.add(card);
-                            } catch (Exception e) {
-                                logger.warn("⚠️ Erreur parsing carte: {}", e.getMessage());
+                        if (cardsArray != null && cardsArray.isArray()) {
+                            List<MtgCard> cards = new ArrayList<>();
+                            for (JsonNode cardNode : cardsArray) {
+                                try {
+                                    MtgCard card = parseCardFromMtgApi(cardNode);
+                                    if (card != null) {
+                                        cards.add(card);
+                                    }
+                                } catch (Exception e) {
+                                    logger.warn("⚠️ Erreur parsing carte MTG API: {}", e.getMessage());
+                                }
                             }
+
+                            logger.info("✅ {} cartes parsées depuis MTG API pour {}", cards.size(), setCode);
+                            return cards;
                         }
 
-                        logger.info("✅ {} cartes parsées avec succès pour {}", cards.size(), setCode);
-                        return cards;
+                        logger.warn("⚠️ Aucune carte trouvée dans la réponse MTG API pour {}", setCode);
+                        return Collections.<MtgCard>emptyList();
 
                     } catch (Exception e) {
-                        logger.error("❌ Erreur parsing JSON pour {} : {}", setCode, e.getMessage());
+                        logger.error("❌ Erreur parsing réponse MTG API pour {} : {}", setCode, e.getMessage());
                         return Collections.<MtgCard>emptyList();
                     }
                 })
-                .doOnError(error -> logger.error("❌ Erreur lors de la récupération des cartes pour {} : {}", setCode, error.getMessage()));
+                .onErrorReturn(Collections.emptyList());
     }
 
-    // ========== MÉTHODES DE MAPPING (inchangées) ==========
-
-    private MtgCard mapJsonToMtgCard(com.fasterxml.jackson.databind.JsonNode cardNode, String setCode) {
+    /**
+     * Parse une carte depuis l'API MTG
+     */
+    private MtgCard parseCardFromMtgApi(JsonNode cardNode) {
         String imageUrl = cardNode.get("imageUrl") != null ? cardNode.get("imageUrl").asText() : null;
         if (imageUrl == null || imageUrl.isEmpty()) {
             String multiverseId = cardNode.get("multiverseid") != null ? cardNode.get("multiverseid").asText() : null;
             String cardNumber = cardNode.get("number") != null ? cardNode.get("number").asText() : null;
+            String setCode = cardNode.get("set") != null ? cardNode.get("set").asText() : null;
             imageUrl = generateImageUrl(multiverseId, setCode, cardNumber);
         }
 
@@ -511,7 +472,7 @@ public class MtgService {
                 parseStringArray(cardNode.get("types")),
                 parseStringArray(cardNode.get("subtypes")),
                 cardNode.get("rarity") != null ? cardNode.get("rarity").asText() : "Unknown",
-                cardNode.get("set") != null ? cardNode.get("set").asText() : setCode,
+                cardNode.get("set") != null ? cardNode.get("set").asText() : null,
                 cardNode.get("setName") != null ? cardNode.get("setName").asText() : null,
                 cardNode.get("text") != null ? cardNode.get("text").asText() : null,
                 cardNode.get("artist") != null ? cardNode.get("artist").asText() : null,
@@ -524,11 +485,11 @@ public class MtgService {
         );
     }
 
-    private List<String> parseStringArray(com.fasterxml.jackson.databind.JsonNode node) {
+    private List<String> parseStringArray(JsonNode node) {
         if (node == null || !node.isArray()) return null;
 
         List<String> result = new ArrayList<>();
-        for (com.fasterxml.jackson.databind.JsonNode item : node) {
+        for (JsonNode item : node) {
             result.add(item.asText());
         }
         return result.isEmpty() ? null : result;
@@ -578,9 +539,11 @@ public class MtgService {
         );
     }
 
+    // Dans MtgService.java - Méthode entityToModel mise à jour
+
     private MtgCard entityToModel(CardEntity entity) {
         return new MtgCard(
-                entity.getId(),
+                entity.getExternalId(), // Utiliser externalId au lieu de id
                 entity.getName(),
                 entity.getManaCost(),
                 entity.getCmc(),
@@ -600,156 +563,8 @@ public class MtgService {
                 entity.getToughness(),
                 entity.getLayout(),
                 entity.getMultiverseid(),
+                // Générer l'URL d'image : utiliser l'UUID pour l'endpoint local
                 entity.getLocalImagePath() != null ? "/api/images/" + entity.getId() : entity.getOriginalImageUrl()
         );
     }
-
-    // AJOUTER cette méthode dans MtgService.java
-
-    /**
-     * Extensions qui n'existent que sur Scryfall (Universes Beyond)
-     */
-    private static final Set<String> SCRYFALL_ONLY_SETS = Set.of(
-            "FIN", "FIC", "FCA", "TFIN", "TFIC", "RFIN", // Final Fantasy
-            "WHO", "TWD", "SLD", "UNF" // Autres Universes Beyond
-    );
-
-    /**
-     * MÉTHODE CORRIGÉE - Récupère les cartes d'une extension
-     * Utilise Scryfall pour les sets Universes Beyond
-     */
-    public Mono<List<MtgCard>> getCardsFromSet(String setCode) {
-        logger.info("🔍 Récupération des cartes pour l'extension: {}", setCode);
-
-        // Vérifier d'abord en base de données
-        List<CardEntity> cardsInDb = cardRepository.findBySetCodeOrderByNameAsc(setCode);
-        if (!cardsInDb.isEmpty()) {
-            logger.info("✅ {} cartes trouvées en base pour {}", cardsInDb.size(), setCode);
-            List<MtgCard> cards = cardsInDb.stream()
-                    .map(this::entityToModel)
-                    .collect(Collectors.toList());
-            return Mono.just(cards);
-        }
-
-        // Si le set n'existe que sur Scryfall, utiliser ScryfallService
-        if (SCRYFALL_ONLY_SETS.contains(setCode.toUpperCase())) {
-            logger.info("🔮 Extension {} détectée comme Universes Beyond - utilisation de Scryfall", setCode);
-            return scryfallService.getCardsFromScryfall(setCode)
-                    .doOnNext(cards -> {
-                        if (!cards.isEmpty()) {
-                            logger.info("✅ {} cartes récupérées depuis Scryfall pour {}", cards.size(), setCode);
-                            // Sauvegarder en arrière-plan
-                            CompletableFuture.runAsync(() -> {
-                                try {
-                                    persistenceService.saveCardsForSet(setCode, cards);
-                                } catch (Exception e) {
-                                    logger.error("❌ Erreur sauvegarde {} : {}", setCode, e.getMessage());
-                                }
-                            });
-                        } else {
-                            logger.warn("⚠️ Aucune carte Scryfall trouvée pour {}", setCode);
-                        }
-                    });
-        }
-
-        // Sinon, utiliser l'API MTG classique
-        logger.info("🌐 Récupération depuis l'API MTG officielle pour : {}", setCode);
-        return fetchCardsFromMtgApi(setCode);
-    }
-
-    /**
-     * MÉTHODE CORRIGÉE - Récupère la dernière extension avec gestion Scryfall
-     */
-    public Mono<MtgSet> getLatestSetWithCards() {
-        logger.debug("🔍 Récupération de la dernière extension avec cartes");
-
-        // Chercher d'abord en base avec priorité aux extensions avec cartes
-        List<SetEntity> recentSets = setRepository.findLatestSets();
-
-        if (!recentSets.isEmpty()) {
-            // Prendre la première extension qui a des cartes
-            Optional<SetEntity> setWithCards = recentSets.stream()
-                    .filter(set -> {
-                        long cardCount = cardRepository.countBySetCode(set.getCode());
-                        return cardCount > 0;
-                    })
-                    .findFirst();
-
-            if (setWithCards.isPresent()) {
-                SetEntity setEntity = setWithCards.get();
-                logger.info("✅ Dernière extension trouvée en base : {} ({}) - {} cartes",
-                        setEntity.getName(), setEntity.getCode(),
-                        cardRepository.countBySetCode(setEntity.getCode()));
-
-                // Récupérer les cartes
-                return getCardsFromSet(setEntity.getCode())
-                        .map(cards -> {
-                            MtgSet mtgSet = entityToModel(setEntity);
-                            return new MtgSet(
-                                    mtgSet.code(),
-                                    mtgSet.name(),
-                                    mtgSet.type(),
-                                    mtgSet.block(),
-                                    mtgSet.releaseDate(),
-                                    mtgSet.gathererCode(),
-                                    mtgSet.magicCardsInfoCode(),
-                                    mtgSet.border(),
-                                    mtgSet.onlineOnly(),
-                                    cards // Ajouter les cartes
-                            );
-                        });
-            }
-        }
-
-        // Si aucune extension en base, récupérer depuis les APIs
-        logger.info("🌐 Aucune extension récente en base, récupération depuis les APIs");
-        return fetchLatestSetFromApis();
-    }
-
-    /**
-     * Récupère les cartes depuis l'API MTG classique
-     */
-    private Mono<List<MtgCard>> fetchCardsFromMtgApi(String setCode) {
-        String url = baseUrl + "/cards?set=" + setCode + "&pageSize=500";
-
-        return webClient.get()
-                .uri(url)
-                .retrieve()
-                .bodyToMono(String.class)
-                .timeout(Duration.ofSeconds(30))
-                .map(response -> {
-                    try {
-                        JsonNode root = new ObjectMapper().readTree(response);
-                        JsonNode cardsArray = root.get("cards");
-
-                        if (cardsArray != null && cardsArray.isArray()) {
-                            List<MtgCard> cards = new ArrayList<>();
-                            for (JsonNode cardNode : cardsArray) {
-                                try {
-                                    MtgCard card = parseCardFromMtgApi(cardNode);
-                                    if (card != null) {
-                                        cards.add(card);
-                                    }
-                                } catch (Exception e) {
-                                    logger.warn("⚠️ Erreur parsing carte MTG API: {}", e.getMessage());
-                                }
-                            }
-
-                            logger.info("✅ {} cartes parsées depuis MTG API pour {}", cards.size(), setCode);
-                            return cards;
-                        }
-
-                        logger.warn("⚠️ Aucune carte trouvée dans la réponse MTG API pour {}", setCode);
-                        return Collections.<MtgCard>emptyList();
-
-                    } catch (Exception e) {
-                        logger.error("❌ Erreur parsing réponse MTG API pour {} : {}", setCode, e.getMessage());
-                        return Collections.<MtgCard>emptyList();
-                    }
-                })
-                .onErrorReturn(Collections.emptyList());
-    }
-
-
-
 }

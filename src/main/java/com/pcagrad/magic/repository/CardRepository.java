@@ -1,5 +1,4 @@
-// CARDREPOSITORY COMPLET avec toutes les méthodes manquantes
-
+// ========== CardRepository.java ==========
 package com.pcagrad.magic.repository;
 
 import com.pcagrad.magic.entity.CardEntity;
@@ -14,22 +13,23 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
-public interface CardRepository extends JpaRepository<CardEntity, String> {
+public interface CardRepository extends JpaRepository<CardEntity, UUID> {
 
-    // Méthodes de base
+    // Méthodes de base par setCode
     List<CardEntity> findBySetCode(String setCode);
     List<CardEntity> findBySetCodeOrderByNameAsc(String setCode);
     long countBySetCode(String setCode);
     Page<CardEntity> findBySetCode(String setCode, Pageable pageable);
 
-    // MÉTHODES MANQUANTES AJOUTÉES
+    // Recherche par ID externe (ancien ID string des APIs)
+    Optional<CardEntity> findByExternalId(String externalId);
+    Optional<CardEntity> findByExternalIdAndSetCode(String externalId, String setCode);
+    boolean existsByExternalIdAndSetCode(String externalId, String setCode);
 
-    // 1. Pour CardPersistenceService
-    boolean existsByIdAndSetCode(String id, String setCode);
-
-    // 2. Pour la recherche avec filtres
+    // Recherche avec filtres
     @Query("SELECT c FROM CardEntity c WHERE " +
             "(:setCode IS NULL OR c.setCode = :setCode) AND " +
             "(:name IS NULL OR LOWER(c.name) LIKE LOWER(CONCAT('%', :name, '%'))) AND " +
@@ -45,11 +45,11 @@ public interface CardRepository extends JpaRepository<CardEntity, String> {
             Pageable pageable
     );
 
-    // 3. Pour ImageDownloadService
+    // Pour ImageDownloadService
     List<CardEntity> findByImageDownloadedTrueAndLocalImagePathIsNotNull();
     List<CardEntity> findByImageDownloadedFalseOrderByCreatedAtAsc();
 
-    // 4. Suppression par code d'extension - CORRECTION: int au lieu de long
+    // Suppression par code d'extension
     @Modifying
     @Transactional
     @Query("DELETE FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode)")
@@ -59,7 +59,7 @@ public interface CardRepository extends JpaRepository<CardEntity, String> {
     @Transactional
     int deleteBySetCode(String setCode);
 
-    // 5. Méthodes utiles pour les statistiques
+    // Méthodes utiles pour les statistiques
     @Query("SELECT COUNT(c) FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode)")
     long countBySetCodeIgnoreCase(@Param("setCode") String setCode);
 
@@ -71,4 +71,9 @@ public interface CardRepository extends JpaRepository<CardEntity, String> {
 
     @Query("SELECT c.rarity, COUNT(c) FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode) GROUP BY c.rarity")
     List<Object[]> getRarityStatsForSet(@Param("setCode") String setCode);
+
+    // Nouvelles méthodes pour la gestion des doublons avec UUID
+    @Query("SELECT c FROM CardEntity c WHERE c.externalId = :externalId AND c.setCode = :setCode")
+    List<CardEntity> findDuplicatesByExternalIdAndSetCode(@Param("externalId") String externalId, @Param("setCode") String setCode);
 }
+

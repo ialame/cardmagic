@@ -198,7 +198,7 @@ public class ImageDownloadService {
                     card.getSetCode(), card.getNumber(), safeName, extension);
         } else {
             return String.format("%s_%s_%s%s",
-                    card.getSetCode(), card.getId().substring(0, 8), safeName, extension);
+                    card.getSetCode(), card.getId(), safeName, extension);
         }
     }
 
