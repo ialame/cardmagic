@@ -1,74 +1,74 @@
+// CARDREPOSITORY COMPLET avec toutes les méthodes manquantes
+
 package com.pcagrad.magic.repository;
 
 import com.pcagrad.magic.entity.CardEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface CardRepository extends JpaRepository<CardEntity, String> {
 
+    // Méthodes de base
+    List<CardEntity> findBySetCode(String setCode);
+    List<CardEntity> findBySetCodeOrderByNameAsc(String setCode);
+    long countBySetCode(String setCode);
+    Page<CardEntity> findBySetCode(String setCode, Pageable pageable);
 
-    // Rechercher par nom (partiel)
-    List<CardEntity> findByNameContainingIgnoreCaseOrderByNameAsc(String name);
+    // MÉTHODES MANQUANTES AJOUTÉES
 
-    // Rechercher par rareté
-    List<CardEntity> findByRarityOrderByNameAsc(String rarity);
+    // 1. Pour CardPersistenceService
+    boolean existsByIdAndSetCode(String id, String setCode);
 
-    // Rechercher par type
-    List<CardEntity> findByTypeContainingIgnoreCaseOrderByNameAsc(String type);
-
-    // Rechercher par artiste
-    List<CardEntity> findByArtistContainingIgnoreCaseOrderByNameAsc(String artist);
-
-    // Recherche combinée avec pagination
+    // 2. Pour la recherche avec filtres
     @Query("SELECT c FROM CardEntity c WHERE " +
-            "(:name IS NULL OR LOWER(c.name) LIKE LOWER(CONCAT('%', :name, '%'))) AND " +
             "(:setCode IS NULL OR c.setCode = :setCode) AND " +
-            "(:rarity IS NULL OR c.rarity = :rarity) AND " +
+            "(:name IS NULL OR LOWER(c.name) LIKE LOWER(CONCAT('%', :name, '%'))) AND " +
             "(:type IS NULL OR LOWER(c.type) LIKE LOWER(CONCAT('%', :type, '%'))) AND " +
+            "(:rarity IS NULL OR c.rarity = :rarity) AND " +
             "(:artist IS NULL OR LOWER(c.artist) LIKE LOWER(CONCAT('%', :artist, '%')))")
     Page<CardEntity> findCardsWithFilters(
-            @Param("name") String name,
             @Param("setCode") String setCode,
-            @Param("rarity") String rarity,
+            @Param("name") String name,
             @Param("type") String type,
+            @Param("rarity") String rarity,
             @Param("artist") String artist,
             Pageable pageable
     );
 
-    // Compter les cartes par rareté dans une extension
-    @Query("SELECT c.rarity, COUNT(c) FROM CardEntity c WHERE c.setCode = :setCode GROUP BY c.rarity")
-    List<Object[]> countByRarityInSet(@Param("setCode") String setCode);
-
-    // Cartes sans image téléchargée
+    // 3. Pour ImageDownloadService
+    List<CardEntity> findByImageDownloadedTrueAndLocalImagePathIsNotNull();
     List<CardEntity> findByImageDownloadedFalseOrderByCreatedAtAsc();
 
-    // Cartes avec image locale
-    List<CardEntity> findByImageDownloadedTrueAndLocalImagePathIsNotNull();
+    // 4. Suppression par code d'extension - CORRECTION: int au lieu de long
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode)")
+    int deleteBySetCodeIgnoreCase(@Param("setCode") String setCode);
 
-    // Vérifier si une carte existe
-    boolean existsByIdAndSetCode(String id, String setCode);
+    @Modifying
+    @Transactional
+    int deleteBySetCode(String setCode);
 
-    // Statistiques générales
-    @Query("SELECT COUNT(DISTINCT c.setCode) FROM CardEntity c")
-    long countDistinctSets();
+    // 5. Méthodes utiles pour les statistiques
+    @Query("SELECT COUNT(c) FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode)")
+    long countBySetCodeIgnoreCase(@Param("setCode") String setCode);
 
-    @Query("SELECT COUNT(DISTINCT c.artist) FROM CardEntity c WHERE c.artist IS NOT NULL")
+    @Query("SELECT c FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode) ORDER BY c.name ASC")
+    List<CardEntity> findBySetCodeIgnoreCaseOrderByNameAsc(@Param("setCode") String setCode);
+
+    @Query("SELECT COUNT(DISTINCT c.artist) FROM CardEntity c")
     long countDistinctArtists();
 
-    // Cartes les plus récentes
-    List<CardEntity> findTop10ByOrderByCreatedAtDesc();
-
-    // AJOUTEZ CETTE MÉTHODE :
-    long countBySetCode(String setCode);
-
-    // Si cette méthode n'existe pas déjà, ajoutez-la aussi :
-    List<CardEntity> findBySetCodeOrderByNameAsc(String setCode);
-
+    @Query("SELECT c.rarity, COUNT(c) FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode) GROUP BY c.rarity")
+    List<Object[]> getRarityStatsForSet(@Param("setCode") String setCode);
 }

@@ -321,4 +321,56 @@ public class CardPersistenceService {
         public long getDistinctArtists() { return distinctArtists; }
         public ImageDownloadService.ImageDownloadStats getImageStats() { return imageStats; }
     }
+
+    // AJOUTER cette méthode dans CardPersistenceService.java
+
+    /**
+     * Méthode pour sauvegarder une liste de cartes (utilisée par ScryfallController)
+     */
+    public int saveCards(List<MtgCard> cards, String setCode) {
+        logger.info("💾 Début de la sauvegarde de {} cartes pour l'extension {}", cards.size(), setCode);
+
+        int savedCount = 0;
+        int updatedCount = 0;
+        int skippedCount = 0;
+
+        for (MtgCard mtgCard : cards) {
+            try {
+                CardEntity result = saveOrUpdateCard(mtgCard, setCode);
+                if (result != null) {
+                    if (cardRepository.existsByIdAndSetCode(mtgCard.id(), setCode)) {
+                        updatedCount++;
+                    } else {
+                        savedCount++;
+                    }
+
+                    // Déclencher le téléchargement de l'image en arrière-plan
+                    if (result.getOriginalImageUrl() != null && !result.getOriginalImageUrl().isEmpty()) {
+                        try {
+                            imageDownloadService.downloadCardImage(result);
+                        } catch (Exception e) {
+                            logger.warn("⚠️ Erreur téléchargement image pour {} : {}", mtgCard.name(), e.getMessage());
+                        }
+                    }
+                } else {
+                    skippedCount++;
+                }
+            } catch (Exception e) {
+                logger.error("❌ Erreur lors de la sauvegarde de la carte {} : {}",
+                        mtgCard.name(), e.getMessage());
+                skippedCount++;
+            }
+        }
+
+        // Mettre à jour les statistiques de l'extension
+        updateSetStatistics(setCode);
+
+        logger.info("✅ Sauvegarde terminée pour {} : {} nouvelles, {} mises à jour, {} ignorées",
+                setCode, savedCount, updatedCount, skippedCount);
+
+        return savedCount + updatedCount;
+    }
+
+
+
 }

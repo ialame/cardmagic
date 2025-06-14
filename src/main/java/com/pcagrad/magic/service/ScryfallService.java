@@ -26,6 +26,9 @@ public class ScryfallService {
         this.objectMapper = new ObjectMapper();
     }
 
+
+    // AJOUTER cette méthode dans ScryfallService.java
+
     /**
      * Récupère TOUTES les cartes d'une extension depuis Scryfall avec pagination
      */
@@ -198,67 +201,6 @@ public class ScryfallService {
     }
 
     /**
-     * Parse une carte Scryfall vers MtgCard
-     */
-    private MtgCard parseScryfallCard(JsonNode cardNode) {
-        try {
-            // Image URL avec fallback pour cartes double-face
-            String imageUrl = extractImageUrl(cardNode);
-
-            // Mana Cost avec validation
-            String manaCost = cardNode.has("mana_cost") && !cardNode.get("mana_cost").isNull()
-                    ? cardNode.get("mana_cost").asText() : null;
-
-            // Rareté avec conversion
-            String rarity = convertRarity(cardNode);
-
-            // Validation des champs obligatoires
-            String id = cardNode.has("id") ? cardNode.get("id").asText() : null;
-            String name = cardNode.has("name") ? cardNode.get("name").asText() : null;
-            String typeLine = cardNode.has("type_line") ? cardNode.get("type_line").asText() : "Unknown";
-            String setCodeUpper = cardNode.has("set") ? cardNode.get("set").asText().toUpperCase() : "UNK";
-            String setName = cardNode.has("set_name") ? cardNode.get("set_name").asText() : "Unknown Set";
-
-            if (id == null || name == null) {
-                throw new IllegalArgumentException("Carte avec ID ou nom manquant");
-            }
-
-            return new MtgCard(
-                    id,
-                    name,
-                    manaCost,
-                    cardNode.has("cmc") ? cardNode.get("cmc").asInt() : null,
-                    parseColors(cardNode.get("colors")),
-                    parseColors(cardNode.get("color_identity")),
-                    typeLine,
-                    parseSupertypes(typeLine),
-                    parseTypes(typeLine),
-                    parseSubtypes(typeLine),
-                    rarity,
-                    setCodeUpper,
-                    setName,
-                    cardNode.has("oracle_text") && !cardNode.get("oracle_text").isNull()
-                            ? cardNode.get("oracle_text").asText() : null,
-                    cardNode.has("artist") && !cardNode.get("artist").isNull()
-                            ? cardNode.get("artist").asText() : null,
-                    cardNode.has("collector_number") && !cardNode.get("collector_number").isNull()
-                            ? cardNode.get("collector_number").asText() : null,
-                    cardNode.has("power") && !cardNode.get("power").isNull()
-                            ? cardNode.get("power").asText() : null,
-                    cardNode.has("toughness") && !cardNode.get("toughness").isNull()
-                            ? cardNode.get("toughness").asText() : null,
-                    cardNode.has("layout") ? cardNode.get("layout").asText() : null,
-                    null, // multiverseid pas disponible sur Scryfall
-                    imageUrl
-            );
-        } catch (Exception e) {
-            String cardName = cardNode.has("name") ? cardNode.get("name").asText() : "Carte inconnue";
-            logger.error("❌ Erreur parsing carte '{}': {}", cardName, e.getMessage());
-            throw e;
-        }
-    }
-
-    /**
      * Extrait l'URL d'image avec gestion des cartes double-face
      */
     private String extractImageUrl(JsonNode cardNode) {
@@ -376,4 +318,295 @@ public class ScryfallService {
      * Record pour les informations d'extension
      */
     public record SetInfo(boolean exists, String name, int expectedCardCount, String releaseDate) {}
+
+// 1. CORRECTION dans ScryfallService.java - Méthode fetchAllCardsFromSet
+
+    /**
+     * Récupère TOUTES les cartes d'une extension avec pagination complète
+     */
+    public List<MtgCard> fetchAllCardsFromSet(String setCode) {
+        logger.info("🔮 Récupération COMPLÈTE des cartes de {} depuis Scryfall", setCode);
+
+        List<MtgCard> allCards = new ArrayList<>();
+        RestTemplate restTemplate = new RestTemplate();
+        int page = 1;
+        boolean hasMore = true;
+
+        // OBJECTIF SPÉCIAL POUR FIN
+        int expectedCards = "FIN".equalsIgnoreCase(setCode) ? 586 : 0;
+
+        while (hasMore && page <= 20) { // Augmenté de 10 à 20 pages max
+            String currentUrl = String.format(
+                    "https://api.scryfall.com/cards/search?q=set:%s&unique=prints&format=json&order=name&page=%d",
+                    setCode.toLowerCase(), page
+            );
+
+            logger.info("📄 Récupération page {} pour {} - URL: {}", page, setCode, currentUrl);
+
+            try {
+                String response = restTemplate.getForObject(currentUrl, String.class);
+
+                if (response == null) {
+                    logger.warn("⚠️ Réponse nulle pour page {} de {}", page, setCode);
+                    break;
+                }
+
+                JsonNode root = objectMapper.readTree(response);
+
+                // Vérifier erreurs API
+                if (root.has("type") && "error".equals(root.get("type").asText())) {
+                    String errorMessage = root.has("details") ? root.get("details").asText() : "Erreur inconnue";
+
+                    if (errorMessage.contains("didn't match any cards") && !allCards.isEmpty()) {
+                        logger.info("🏁 Fin naturelle pagination pour {} - {} cartes totales", setCode, allCards.size());
+                        break;
+                    } else {
+                        logger.error("❌ Erreur Scryfall API page {}: {}", page, errorMessage);
+                        break;
+                    }
+                }
+
+                // Parser les cartes
+                JsonNode dataNode = root.get("data");
+                if (dataNode != null && dataNode.isArray()) {
+                    List<MtgCard> pageCards = parseCardsFromPage(dataNode, setCode);
+                    allCards.addAll(pageCards);
+
+                    logger.info("✅ Page {} : {} cartes ajoutées (Total: {} / {})",
+                            page, pageCards.size(), allCards.size(),
+                            expectedCards > 0 ? expectedCards : "?");
+
+                    // NOUVELLE LOGIQUE : Ne s'arrêter QUE si has_more = false
+                    if (root.has("has_more")) {
+                        hasMore = root.get("has_more").asBoolean();
+                        if (!hasMore) {
+                            logger.info("🏁 has_more=false - pagination terminée pour {} page {}", setCode, page);
+                        }
+                    } else {
+                        // Si pas de has_more, continuer tant qu'on a des cartes
+                        hasMore = pageCards.size() > 0;
+                        if (!hasMore) {
+                            logger.info("🏁 Page vide - pagination terminée pour {} page {}", setCode, page);
+                        }
+                    }
+
+                    // POUR FIN : Vérifier si on a atteint l'objectif
+                    if ("FIN".equalsIgnoreCase(setCode) && allCards.size() >= expectedCards) {
+                        logger.info("🎯 Objectif FIN atteint : {} cartes récupérées !", allCards.size());
+                        break;
+                    }
+
+                } else {
+                    logger.warn("⚠️ Pas de données dans la page {} pour {}", page, setCode);
+                    hasMore = false;
+                }
+
+                page++;
+
+                // Délai respectueux pour l'API
+                if (hasMore) {
+                    Thread.sleep(150);
+                }
+
+            } catch (Exception e) {
+                if (e.getMessage().contains("404") && !allCards.isEmpty()) {
+                    logger.info("🏁 Erreur 404 - fin pagination pour {} après {} cartes", setCode, allCards.size());
+                    break;
+                } else {
+                    logger.error("❌ Erreur page {} pour {} : {}", page, setCode, e.getMessage());
+
+                    // Pour FIN, essayer de continuer malgré l'erreur
+                    if (!"FIN".equalsIgnoreCase(setCode)) {
+                        break;
+                    }
+                    page++; // Essayer la page suivante
+                }
+            }
+        }
+
+        logger.info("🎉 Pagination terminée pour {} : {} cartes au total sur {} page(s)",
+                setCode, allCards.size(), page - 1);
+
+        // ALERTE SPÉCIALE POUR FIN
+        if ("FIN".equalsIgnoreCase(setCode) && allCards.size() < expectedCards) {
+            logger.warn("⚠️ FIN INCOMPLET : {} cartes récupérées sur {} attendues",
+                    allCards.size(), expectedCards);
+        }
+
+        return allCards;
+    }
+// MÉTHODE CORRIGÉE dans ScryfallService.java - Compatible avec le record MtgCard
+
+    /**
+     * Parse une carte depuis un JsonNode Scryfall
+     */
+    public MtgCard parseScryfallCard(JsonNode cardNode) {
+        try {
+            // Extraction des données de base
+            String id = cardNode.has("id") ? cardNode.get("id").asText() : null;
+            String name = cardNode.has("name") ? cardNode.get("name").asText() : "Unknown";
+            String manaCost = cardNode.has("mana_cost") ? cardNode.get("mana_cost").asText() : null;
+            String typeLine = cardNode.has("type_line") ? cardNode.get("type_line").asText() : null;
+            String rarity = cardNode.has("rarity") ? cardNode.get("rarity").asText() : null;
+            String setCode = cardNode.has("set") ? cardNode.get("set").asText().toUpperCase() : null;
+            String artist = cardNode.has("artist") ? cardNode.get("artist").asText() : null;
+            String text = cardNode.has("oracle_text") ? cardNode.get("oracle_text").asText() : null;
+            String power = cardNode.has("power") ? cardNode.get("power").asText() : null;
+            String toughness = cardNode.has("toughness") ? cardNode.get("toughness").asText() : null;
+            String loyalty = cardNode.has("loyalty") ? cardNode.get("loyalty").asText() : null;
+            String number = cardNode.has("collector_number") ? cardNode.get("collector_number").asText() : null;
+            String layout = cardNode.has("layout") ? cardNode.get("layout").asText() : "normal";
+
+            // CMC (Converted Mana Cost)
+            Integer cmc = cardNode.has("cmc") ? cardNode.get("cmc").asInt() : null;
+
+            // MultiverseId (peut ne pas exister pour toutes les cartes)
+            Integer multiverseId = null;
+            if (cardNode.has("multiverse_ids") && cardNode.get("multiverse_ids").isArray() &&
+                    cardNode.get("multiverse_ids").size() > 0) {
+                multiverseId = cardNode.get("multiverse_ids").get(0).asInt();
+            }
+
+            // URL d'image
+            String imageUrl = null;
+            if (cardNode.has("image_uris")) {
+                JsonNode imageUris = cardNode.get("image_uris");
+                if (imageUris.has("normal")) {
+                    imageUrl = imageUris.get("normal").asText();
+                } else if (imageUris.has("large")) {
+                    imageUrl = imageUris.get("large").asText();
+                } else if (imageUris.has("small")) {
+                    imageUrl = imageUris.get("small").asText();
+                }
+            }
+
+            // Pour les cartes double-face, prendre la première face
+            if (imageUrl == null && cardNode.has("card_faces") && cardNode.get("card_faces").isArray()) {
+                JsonNode firstFace = cardNode.get("card_faces").get(0);
+                if (firstFace.has("image_uris")) {
+                    JsonNode faceImageUris = firstFace.get("image_uris");
+                    if (faceImageUris.has("normal")) {
+                        imageUrl = faceImageUris.get("normal").asText();
+                    }
+                }
+            }
+
+            // Couleurs
+            List<String> colors = new ArrayList<>();
+            if (cardNode.has("colors") && cardNode.get("colors").isArray()) {
+                for (JsonNode colorNode : cardNode.get("colors")) {
+                    colors.add(colorNode.asText());
+                }
+            }
+
+            // Identité de couleur
+            List<String> colorIdentity = new ArrayList<>();
+            if (cardNode.has("color_identity") && cardNode.get("color_identity").isArray()) {
+                for (JsonNode colorNode : cardNode.get("color_identity")) {
+                    colorIdentity.add(colorNode.asText());
+                }
+            }
+
+            // Types, Supertypes, Subtypes
+            List<String> supertypes = new ArrayList<>();
+            List<String> types = new ArrayList<>();
+            List<String> subtypes = new ArrayList<>();
+
+            if (cardNode.has("type_line")) {
+                String typeLineStr = cardNode.get("type_line").asText();
+
+                // Parser la ligne de type (ex: "Legendary Creature — Human Warrior")
+                if (typeLineStr.contains("—")) {
+                    String[] parts = typeLineStr.split("—");
+                    String leftPart = parts[0].trim();
+                    String rightPart = parts.length > 1 ? parts[1].trim() : "";
+
+                    // Partie gauche: supertypes + types
+                    String[] leftWords = leftPart.split("\\s+");
+                    for (String word : leftWords) {
+                        word = word.trim();
+                        if (isSupertype(word)) {
+                            supertypes.add(word);
+                        } else if (isType(word)) {
+                            types.add(word);
+                        }
+                    }
+
+                    // Partie droite: subtypes
+                    if (!rightPart.isEmpty()) {
+                        String[] rightWords = rightPart.split("\\s+");
+                        for (String word : rightWords) {
+                            subtypes.add(word.trim());
+                        }
+                    }
+                } else {
+                    // Pas de subtypes, seulement types et supertypes
+                    String[] words = typeLineStr.split("\\s+");
+                    for (String word : words) {
+                        word = word.trim();
+                        if (isSupertype(word)) {
+                            supertypes.add(word);
+                        } else if (isType(word)) {
+                            types.add(word);
+                        }
+                    }
+                }
+            }
+
+            // Nom du set - essayer de récupérer depuis l'API ou utiliser le code
+            String setName = setCode; // Fallback
+            if (cardNode.has("set_name")) {
+                setName = cardNode.get("set_name").asText();
+            }
+
+            // Création du record MtgCard avec TOUS les paramètres requis
+            return new MtgCard(
+                    id,                // String id
+                    name,              // String name
+                    manaCost,          // String manaCost
+                    cmc,               // Integer cmc
+                    colors,            // List<String> colors
+                    colorIdentity,     // List<String> colorIdentity
+                    typeLine,          // String type
+                    supertypes,        // List<String> supertypes
+                    types,             // List<String> types
+                    subtypes,          // List<String> subtypes
+                    rarity,            // String rarity
+                    setCode,           // String set
+                    setName,           // String setName
+                    text,              // String text
+                    artist,            // String artist
+                    number,            // String number
+                    power,             // String power
+                    toughness,         // String toughness
+                    layout,            // String layout
+                    multiverseId,      // Integer multiverseid
+                    imageUrl           // String imageUrl
+            );
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur parsing carte Scryfall: {}", e.getMessage());
+            // Retourner une carte minimale en cas d'erreur
+            String name = cardNode.has("name") ? cardNode.get("name").asText() : "Unknown Card";
+            String setCode = cardNode.has("set") ? cardNode.get("set").asText().toUpperCase() : "UNK";
+
+            return new MtgCard(
+                    null, name, null, null, new ArrayList<>(), new ArrayList<>(),
+                    null, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
+                    null, setCode, setCode, null, null, null,
+                    null, null, "normal", null, null
+            );
+        }
+    }
+
+    // Méthodes utilitaires pour parser les types
+    private boolean isSupertype(String word) {
+        return List.of("Legendary", "Basic", "Snow", "World", "Ongoing").contains(word);
+    }
+
+    private boolean isType(String word) {
+        return List.of("Artifact", "Creature", "Enchantment", "Instant", "Land",
+                "Planeswalker", "Sorcery", "Tribal", "Conspiracy", "Phenomenon",
+                "Plane", "Scheme", "Vanguard", "Battle").contains(word);
+    }
 }

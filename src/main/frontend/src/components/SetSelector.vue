@@ -71,10 +71,9 @@
             </div>
           </div>
 
-          <!-- Remplacement complet de la section set-actions dans votre template -->
-
+          <!-- Actions pour chaque extension -->
           <div class="set-actions">
-            <!-- Bouton Charger (MTG API + Scryfall fallback) -->
+            <!-- Boutons standards pour toutes les extensions -->
             <button
               @click.stop="loadSetCards(set.code)"
               :disabled="loadingCards[set.code]"
@@ -86,118 +85,86 @@
               {{ loadingCards[set.code] ? 'Chargement...' : 'Charger' }}
             </button>
 
-            <!-- Bouton Scryfall spécifique -->
             <button
-              @click.stop="loadFromScryfall(set.code)"
+              @click.stop="syncFromScryfall(set.code)"
               :disabled="loadingScryfall[set.code]"
               class="scryfall-button"
-              :title="'Charger depuis Scryfall pour ' + set.name"
+              title="Synchroniser depuis Scryfall"
             >
-              <span v-if="loadingScryfall[set.code]">🔮</span>
-              <span v-else>🔮</span>
-              {{ loadingScryfall[set.code] ? 'Scryfall...' : 'Scryfall' }}
+              <span v-if="loadingScryfall[set.code]">🔄</span>
+              <span v-else>🔄</span>
+              {{ loadingScryfall[set.code] ? 'Sync...' : 'Sync' }}
             </button>
 
-            <!-- Bouton Sync Complète -->
-            <button
-              @click.stop="syncCompleteFromScryfall(set.code)"
-              :disabled="syncingComplete[set.code]"
-              class="complete-button"
-              :title="'Synchronisation complète avec pagination pour ' + set.name"
-            >
-              <span v-if="syncingComplete[set.code]">🔄</span>
-              <span v-else>💯</span>
-              {{ syncingComplete[set.code] ? 'Sync...' : 'Complète' }}
-            </button>
-
-            <!-- Bouton spécial Final Fantasy -->
-            <button
-              v-if="set.code === 'FIN'"
-              @click.stop="syncFinalFantasyComplete()"
-              :disabled="syncingFinalFantasy"
-              class="final-fantasy-button"
-              :title="'Synchronisation Final Fantasy avec TOUTES les variantes (objectif: 586 cartes)'"
-            >
-              <span v-if="syncingFinalFantasy">🎮</span>
-              <span v-else>🎯</span>
-              {{ syncingFinalFantasy ? 'FF Sync...' : 'FF 586' }}
-            </button>
-
-            <!-- Bouton Sauvegarder -->
-            <button
-              @click.stop="saveSetData(set.code)"
-              :disabled="savingCards[set.code] || set.cardsCount === 0"
-              class="save-button"
-              :title="'Sauvegarder en base et télécharger images de ' + set.name"
-            >
-              <span v-if="savingCards[set.code]">💾</span>
-              <span v-else>💽</span>
-              {{ savingCards[set.code] ? 'Sauvegarde...' : 'Sauvegarder' }}
-            </button>
-
-            <!-- Bouton Télécharger images -->
             <button
               @click.stop="downloadImages(set.code)"
-              :disabled="downloadingImages[set.code] || set.cardsCount === 0"
+              :disabled="downloadingImages[set.code]"
               class="download-button"
-              :title="'Télécharger toutes les images de ' + set.name"
+              title="Télécharger les images"
             >
-              <span v-if="downloadingImages[set.code]">🖼️</span>
-              <span v-else>📸</span>
-              {{ downloadingImages[set.code] ? 'Télécharge...' : 'Images' }}
+              <span v-if="downloadingImages[set.code]">⬇️</span>
+              <span v-else>📥</span>
+              {{ downloadingImages[set.code] ? 'DL...' : 'Images' }}
             </button>
 
-            <!-- Bouton Debug Pagination -->
+            <!-- BOUTONS SPÉCIAUX POUR FINAL FANTASY (FIN) -->
+            <template v-if="set.code === 'FIN'">
+              <!-- Bouton Synchronisation Avancée FIN -->
+              <button
+                @click.stop="syncFinalFantasyAdvanced()"
+                :disabled="syncingAdvancedFin"
+                class="sync-advanced-fin-button"
+                title="Synchronisation avancée FIN - Toutes les variantes pour atteindre 586 cartes"
+              >
+                <span v-if="syncingAdvancedFin">🔄</span>
+                <span v-else>🎯</span>
+                {{ syncingAdvancedFin ? 'Sync 586...' : 'Sync 586!' }}
+              </button>
+
+              <!-- Bouton Diagnostic FIN -->
+              <button
+                @click.stop="diagnosticFinalFantasyComplet()"
+                :disabled="debuggingFin"
+                class="diagnostic-fin-button"
+                title="Diagnostic complet FIN - Analyser pourquoi 312 au lieu de 586"
+              >
+                <span v-if="debuggingFin">🔬</span>
+                <span v-else>🩺</span>
+                {{ debuggingFin ? 'Diagnostic...' : 'Diagnostic' }}
+              </button>
+
+              <!-- Affichage spécial du statut FIN -->
+              <div class="fin-status" v-if="set.cardsCount">
+
+                <!-- NOUVEAU affichage réaliste -->
+                <div class="fin-status" v-if="set.code === 'FIN' && set.cardsCount">
+  <span class="cards-count" :class="{ 'complete': set.cardsCount >= 312 }">
+    {{ set.cardsCount }}/312
+  </span>
+                  <span v-if="set.cardsCount >= 312" class="success-badge">✅ COMPLET</span>
+                  <span v-else-if="set.cardsCount >= 250" class="nearly-badge">📊 Presque</span>
+                  <span v-else class="warning-badge">⚠️ Partiel</span>
+                  <small class="set-note">Set FIN officiel</small>
+                </div>
+
+
+
+                <span v-else class="warning-badge">⚠️</span>
+              </div>
+            </template>
+
+            <!-- Bouton Debug pagination -->
             <button
               @click.stop="debugPagination(set.code)"
               :disabled="debuggingPagination[set.code]"
               class="debug-button"
-              :title="'Debug pagination pour ' + set.name"
+              title="Debug pagination"
             >
               <span v-if="debuggingPagination[set.code]">🔍</span>
-              <span v-else>🐛</span>
+              <span v-else>🔍</span>
               {{ debuggingPagination[set.code] ? 'Debug...' : 'Debug' }}
             </button>
-
-            <!-- NOUVEAUX BOUTONS SPÉCIFIQUES FINAL FANTASY -->
-            <button
-              v-if="set.code === 'FIN'"
-              @click.stop="debugFinPage1()"
-              :disabled="debuggingFin"
-              class="debug-fin-button"
-              title="Debug FIN Page 1 RAW"
-            >
-              <span v-if="debuggingFin">🔍</span>
-              <span v-else>🎮</span>
-              {{ debuggingFin ? 'FIN P1...' : 'FIN P1' }}
-            </button>
-
-            <button
-              v-if="set.code === 'FIN'"
-              @click.stop="debugFinPagination()"
-              :disabled="debuggingFin"
-              class="debug-fin-button"
-              title="Debug FIN Pagination Complète"
-            >
-              <span v-if="debuggingFin">📄</span>
-              <span v-else>📋</span>
-              {{ debuggingFin ? 'FIN Pag...' : 'FIN Pag' }}
-            </button>
-
-            <!-- Bouton Diagnostic Complet FIN -->
-            <button
-              v-if="set.code === 'FIN'"
-              @click.stop="diagnosticFinComplete()"
-              :disabled="debuggingFin"
-              class="diagnostic-fin-button"
-              title="Diagnostic complet FIN - Pourquoi 312 au lieu de 586 cartes ?"
-            >
-              <span v-if="debuggingFin">🔬</span>
-              <span v-else>🎯</span>
-              {{ debuggingFin ? 'Diagnost...' : '312→586?' }}
-            </button>
           </div>
-
         </div>
       </div>
 
@@ -256,8 +223,10 @@ const syncingComplete = ref<Record<string, boolean>>({})
 const savingCards = ref<Record<string, boolean>>({})
 const downloadingImages = ref<Record<string, boolean>>({})
 const debuggingPagination = ref<Record<string, boolean>>({})
-const syncingFinalFantasy = ref(false) // État spécial pour Final Fantasy
-const debuggingFin = ref(false) // Debug spécial Final Fantasy
+
+// NOUVELLES VARIABLES pour FIN
+const syncingAdvancedFin = ref(false)
+const debuggingFin = ref(false)
 
 // Statut des opérations
 const operationStatus = ref<{type: string, message: string} | null>(null)
@@ -266,8 +235,358 @@ const operationStatus = ref<{type: string, message: string} | null>(null)
 const loading = computed(() => mtgStore.loading)
 const allSets = ref<any[]>([])
 
+// Charger les extensions au montage
+onMounted(async () => {
+  await loadAllSets()
+})
+
+// Méthodes utilitaires
+const toggleSelector = () => {
+  showSelector.value = !showSelector.value
+}
+
+const selectSet = (set: any) => {
+  selectedSet.value = set
+  mtgStore.fetchSetByCode(set.code)
+}
+
+const formatDate = (dateString: string): string => {
+  try {
+    return new Date(dateString).toLocaleDateString('fr-FR')
+  } catch {
+    return dateString
+  }
+}
+
+// MÉTHODES PRINCIPALES
+
+/**
+ * Charger toutes les extensions
+ */
+const loadAllSets = async () => {
+  try {
+    const response = await axios.get('/api/mtg/sets')
+    if (response.data.success) {
+      allSets.value = response.data.data || []
+      console.log('📦 Extensions chargées:', allSets.value.length)
+    }
+  } catch (error) {
+    console.error('❌ Erreur chargement extensions:', error)
+    showOperationStatus('error', 'Erreur lors du chargement des extensions')
+  }
+}
+
+/**
+ * Charger les cartes d'une extension (MTG API + Scryfall fallback)
+ */
+const loadSetCards = async (setCode: string) => {
+  try {
+    loadingCards.value[setCode] = true
+    console.log('📥 Chargement cartes pour:', setCode)
+
+    const response = await axios.get(`/api/mtg/sets/${setCode}/with-cards`)
+
+    if (response.data.success) {
+      const data = response.data.data
+      showOperationStatus('success', `${data.totalCards} cartes chargées pour ${setCode}`)
+
+      // Mettre à jour le store
+      await mtgStore.fetchSetByCode(setCode)
+
+      // Rafraîchir la liste des extensions
+      await refreshSetStatus(setCode)
+    } else {
+      throw new Error(response.data.message)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur chargement cartes:', error)
+    showOperationStatus('error', `Erreur chargement ${setCode}`)
+  } finally {
+    loadingCards.value[setCode] = false
+  }
+}
+
+/**
+ * Synchroniser depuis Scryfall
+ */
+const syncFromScryfall = async (setCode: string) => {
+  try {
+    loadingScryfall.value[setCode] = true
+    console.log('🔄 Synchronisation Scryfall pour:', setCode)
+
+    const response = await axios.post(`/api/scryfall/sync/${setCode}`)
+
+    if (response.data.success) {
+      showOperationStatus('success', `Synchronisation Scryfall démarrée pour ${setCode}`)
+
+      // Attendre un peu puis rafraîchir
+      setTimeout(async () => {
+        await refreshSetStatus(setCode)
+        await mtgStore.fetchSetByCode(setCode)
+      }, 3000)
+    } else {
+      throw new Error(response.data.message)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur sync Scryfall:', error)
+    showOperationStatus('error', `Erreur sync Scryfall pour ${setCode}`)
+  } finally {
+    loadingScryfall.value[setCode] = false
+  }
+}
+
+/**
+ * Télécharger les images
+ */
+const downloadImages = async (setCode: string) => {
+  try {
+    downloadingImages.value[setCode] = true
+    console.log('📥 Téléchargement images pour:', setCode)
+
+    const response = await axios.post(`/api/images/download/${setCode}`)
+
+    if (response.data.success) {
+      showOperationStatus('success', `Téléchargement images démarré pour ${setCode}`)
+    } else {
+      throw new Error(response.data.message)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur téléchargement images:', error)
+    showOperationStatus('error', `Erreur téléchargement images ${setCode}`)
+  } finally {
+    downloadingImages.value[setCode] = false
+  }
+}
+
+/**
+ * Debug pagination
+ */
+const debugPagination = async (setCode: string) => {
+  try {
+    debuggingPagination.value[setCode] = true
+    console.log('🔍 Debug pagination pour:', setCode)
+
+    const response = await axios.get(`/api/scryfall/debug-pagination/${setCode}`)
+
+    if (response.data.success) {
+      console.log('🔍 Résultats debug:', response.data.data)
+      showOperationStatus('info', `Debug pagination terminé pour ${setCode}`)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur debug pagination:', error)
+    showOperationStatus('error', `Erreur debug pagination ${setCode}`)
+  } finally {
+    debuggingPagination.value[setCode] = false
+  }
+}
+
+// Et dans les méthodes JavaScript :
+
+const syncFinalFantasyRealistic = async () => {
+  try {
+    syncingAdvancedFin.value = true
+    console.log('🎮 Synchronisation Final Fantasy - Objectif réaliste: 312 cartes')
+
+    // Utiliser l'endpoint de sync normal qui fonctionne déjà !
+    const response = await axios.post('/api/scryfall/sync/FIN')
+
+    if (response.data.success) {
+      showOperationStatus('success', 'Synchronisation Final Fantasy démarrée')
+
+      setTimeout(async () => {
+        await refreshSetStatus('FIN')
+        const updatedSet = allSets.value.find(s => s.code === 'FIN')
+
+        if (updatedSet && updatedSet.cardsCount >= 312) {
+          showOperationStatus('success', `🎉 Final Fantasy COMPLET: ${updatedSet.cardsCount}/312 cartes`)
+        } else if (updatedSet && updatedSet.cardsCount >= 250) {
+          showOperationStatus('warning', `📊 Final Fantasy quasi-complet: ${updatedSet.cardsCount}/312 cartes`)
+        } else {
+          showOperationStatus('info', `📥 Final Fantasy: ${updatedSet?.cardsCount || 0}/312 cartes récupérées`)
+        }
+      }, 3000)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur sync Final Fantasy:', error)
+    showOperationStatus('error', 'Erreur synchronisation Final Fantasy')
+  } finally {
+    syncingAdvancedFin.value = false
+  }
+}
+
+// Diagnostic mis à jour
+const diagnosticFinalFantasyRealistic = async () => {
+  try {
+    debuggingFin.value = true
+    console.log('🔬 Diagnostic Final Fantasy - Objectif réaliste: 312 cartes')
+
+    const response = await axios.get('/api/scryfall/debug-312-cards')
+
+    if (response.data.success) {
+      const data = response.data.data
+
+      console.log('📊 DIAGNOSTIC FINAL FANTASY:')
+      console.log('• Cartes en base:', data.cartesEnBase)
+      console.log('• Objectif réaliste: 312 cartes')
+      console.log('• Statut:', data.cartesEnBase >= 312 ? '✅ COMPLET' : '⚠️ Partiel')
+
+      if (data.conclusion) {
+        console.log('• Explication:', data.conclusion.explication)
+        console.log('• Statut tech:', data.conclusion.statut)
+      }
+
+      const status = data.cartesEnBase >= 312 ? 'success' : 'info'
+      const message = `Diagnostic: ${data.cartesEnBase}/312 cartes Final Fantasy`
+      showOperationStatus(status, message)
+
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur diagnostic Final Fantasy:', error)
+    showOperationStatus('error', 'Erreur diagnostic Final Fantasy')
+  } finally {
+    debuggingFin.value = false
+  }
+}
+
+
+
+
+/**
+ * NOUVELLE MÉTHODE - Synchronisation avancée Final Fantasy
+ */
+const syncFinalFantasyAdvanced = async () => {
+  try {
+    syncingAdvancedFin.value = true
+    console.log('🎯 Synchronisation AVANCÉE Final Fantasy - Objectif 586 cartes')
+
+    const response = await axios.post('/api/scryfall/sync-final-fantasy-advanced')
+    console.log('🎮 Réponse sync FIN avancée:', response.data)
+
+    if (response.data.success) {
+      const data = response.data.data
+      const cartesSauvegardées = data.cartesSauvegardées || 0
+      const objectifAtteint = data.objectifAtteint || false
+      const meilleureRequête = data.meilleureRequête || 'Inconnue'
+
+      let message = `FIN Avancé: ${cartesSauvegardées} cartes récupérées`
+      if (objectifAtteint) {
+        message = `🎉 OBJECTIF ATTEINT! ${cartesSauvegardées} cartes FIN`
+      } else {
+        message = `⚠️ ${cartesSauvegardées} cartes FIN (objectif: 586)`
+      }
+
+      showOperationStatus(objectifAtteint ? 'success' : 'warning', message)
+
+      console.log('📊 Détails sync FIN avancée:', {
+        cartesSauvegardées,
+        objectifAtteint,
+        meilleureRequête,
+        répartition: data.répartitionRareté
+      })
+
+      // Rafraîchir les données
+      setTimeout(async () => {
+        await refreshSetStatus('FIN')
+        await mtgStore.fetchSetByCode('FIN')
+      }, 2000)
+
+    } else {
+      throw new Error(response.data.message)
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur sync FIN avancée:', error)
+    showOperationStatus('error', 'Erreur synchronisation FIN avancée')
+  } finally {
+    syncingAdvancedFin.value = false
+  }
+}
+
+/**
+ * NOUVELLE MÉTHODE - Diagnostic Final Fantasy complet
+ */
+const diagnosticFinalFantasyComplet = async () => {
+  try {
+    debuggingFin.value = true
+    console.log('🔬 Diagnostic Final Fantasy COMPLET')
+
+    const response = await axios.get('/api/scryfall/diagnostic-fin-complete')
+
+    if (response.data.success) {
+      const data = response.data.data
+
+      console.log('📊 DIAGNOSTIC FIN COMPLET:', {
+        problème: data.problemeActuel,
+        objectif: data.objectif,
+        officielCount: data.setEndpointInfo?.officialCardCount,
+        maxTrouvé: data.maxCardsFound,
+        meilleureRequête: data.bestQuery,
+        analyse: data.analysis
+      })
+
+      // Utiliser showOperationStatus au lieu d'alert pour une meilleure UX
+      showOperationStatus('info', 'Diagnostic terminé - Voir console pour détails')
+
+      // Afficher dans la console de manière organisée
+      console.table({
+        'Objectif': data.objectif,
+        'Actuel': data.problemeActuel,
+        'Max trouvé': data.maxCardsFound,
+        'Meilleure requête': data.bestQuery
+      })
+
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur diagnostic FIN:', error)
+    showOperationStatus('error', 'Erreur diagnostic FIN')
+  } finally {
+    debuggingFin.value = false
+  }
+}
+
+/**
+ * Rafraîchir le statut d'une extension
+ */
+const refreshSetStatus = async (setCode: string) => {
+  try {
+    const response = await axios.get(`/api/mtg/sets/${setCode}/with-cards`)
+    if (response.data.success) {
+      // Mettre à jour l'extension dans la liste
+      const setIndex = allSets.value.findIndex(s => s.code === setCode)
+      if (setIndex !== -1) {
+        allSets.value[setIndex] = {
+          ...allSets.value[setIndex],
+          cardsCount: response.data.data.totalCards,
+          cardsSynced: response.data.data.cardsSynced
+        }
+      }
+    }
+  } catch (error) {
+    console.error('❌ Erreur refresh statut:', error)
+  }
+}
+
+/**
+ * Afficher un statut d'opération
+ */
+const showOperationStatus = (type: string, message: string) => {
+  operationStatus.value = { type, message }
+  setTimeout(() => {
+    operationStatus.value = null
+  }, 5000)
+}
+
+// COMPUTED PROPERTIES
+
 const availableTypes = computed(() => {
-  const types = new Set(allSets.value.map(set => set.type))
+  const types = new Set(allSets.value.map(set => set.type).filter(Boolean))
   return Array.from(types).sort()
 })
 
@@ -293,464 +612,50 @@ const filteredSets = computed(() => {
 })
 
 const filteredAndSortedSets = computed(() => {
-  const sorted = [...filteredSets.value]
+  let sorted = [...filteredSets.value]
 
-  sorted.sort((a, b) => {
-    switch (sortBy.value) {
-      case 'name':
-        return a.name.localeCompare(b.name)
-      case 'code':
-        return a.code.localeCompare(b.code)
-      case 'releaseDate':
-      default:
+  // Trier
+  switch (sortBy.value) {
+    case 'name':
+      sorted.sort((a, b) => a.name.localeCompare(b.name))
+      break
+    case 'code':
+      sorted.sort((a, b) => a.code.localeCompare(b.code))
+      break
+    case 'releaseDate':
+    default:
+      sorted.sort((a, b) => {
         const dateA = a.releaseDate ? new Date(a.releaseDate) : new Date(0)
         const dateB = b.releaseDate ? new Date(b.releaseDate) : new Date(0)
         return dateB.getTime() - dateA.getTime() // Plus récent en premier
-    }
-  })
+      })
+      break
+  }
 
-  // Pagination
-  const start = (currentPage.value - 1) * itemsPerPage
-  const end = start + itemsPerPage
-  return sorted.slice(start, end)
+  return sorted
 })
 
-const totalPages = computed(() =>
-  Math.ceil(filteredSets.value.length / itemsPerPage)
-)
-
-// Méthodes
-const toggleSelector = async () => {
-  showSelector.value = !showSelector.value
-
-  if (showSelector.value && allSets.value.length === 0) {
-    await loadAllSets()
-  }
-}
-
-const loadAllSets = async () => {
-  try {
-    console.log('🔍 Chargement de toutes les extensions...')
-    const response = await axios.get('/api/mtg/debug/all-sets')
-    allSets.value = response.data.data || []
-    console.log('✅ Extensions chargées:', allSets.value.length)
-  } catch (error) {
-    console.error('❌ Erreur chargement extensions:', error)
-    showOperationStatus('error', 'Erreur lors du chargement des extensions')
-  }
-}
-
-const selectSet = (set: any) => {
-  selectedSet.value = set
-  console.log('🎯 Extension sélectionnée:', set.code)
-}
-
-const loadSetCards = async (setCode: string) => {
-  try {
-    loadingCards.value[setCode] = true
-    console.log('📥 Chargement des cartes pour:', setCode)
-
-    // Essayer d'abord MTG API, puis Scryfall en fallback
-    try {
-      await mtgStore.fetchSetByCode(setCode)
-      console.log('✅ Cartes chargées depuis MTG API')
-    } catch (mtgError) {
-      console.log('⚠️ MTG API échoué, essai avec Scryfall...')
-
-      // Fallback vers Scryfall
-      const response = await axios.post(`/api/scryfall/sync/${setCode}`)
-      if (response.data.success) {
-        console.log('✅ Synchronisation Scryfall démarrée')
-        // Attendre un peu puis recharger
-        setTimeout(async () => {
-          await mtgStore.fetchSetByCode(setCode)
-        }, 3000)
-      }
-    }
-
-    // Mettre à jour le statut de l'extension dans la liste
-    await refreshSetStatus(setCode)
-
-    showOperationStatus('success', `Cartes de ${setCode} chargées avec succès`)
-
-  } catch (error: any) {
-    console.error('❌ Erreur chargement cartes:', error)
-    showOperationStatus('error', `Erreur lors du chargement de ${setCode}`)
-  } finally {
-    loadingCards.value[setCode] = false
-  }
-}
-
-const loadFromScryfall = async (setCode: string) => {
-  try {
-    loadingScryfall.value[setCode] = true
-    console.log('🔮 Chargement depuis Scryfall pour:', setCode)
-
-    // Synchroniser depuis Scryfall
-    const response = await axios.post(`/api/scryfall/sync/${setCode}`)
-
-    if (response.data.success) {
-      showOperationStatus('success', `Synchronisation Scryfall démarrée pour ${setCode}`)
-
-      // Attendre un peu puis recharger les données
-      setTimeout(async () => {
-        await refreshSetStatus(setCode)
-        await mtgStore.fetchSetByCode(setCode)
-        showOperationStatus('success', `Cartes Scryfall chargées pour ${setCode}`)
-      }, 3000)
-    } else {
-      throw new Error(response.data.message)
-    }
-
-  } catch (error: any) {
-    console.error('❌ Erreur Scryfall:', error)
-    showOperationStatus('error', `Erreur Scryfall pour ${setCode}`)
-  } finally {
-    loadingScryfall.value[setCode] = false
-  }
-}
-
-const saveSetData = async (setCode: string) => {
-  try {
-    savingCards.value[setCode] = true
-    console.log('💾 Sauvegarde en base pour:', setCode)
-
-    // Forcer la synchronisation en base
-    const response = await axios.post(`/api/mtg/admin/sync-set/${setCode}`)
-
-    if (response.data.success) {
-      await refreshSetStatus(setCode)
-      showOperationStatus('success', `Extension ${setCode} sauvegardée en base`)
-    } else {
-      throw new Error(response.data.message)
-    }
-
-  } catch (error: any) {
-    console.error('❌ Erreur sauvegarde:', error)
-    showOperationStatus('error', `Erreur lors de la sauvegarde de ${setCode}`)
-  } finally {
-    savingCards.value[setCode] = false
-  }
-}
-
-const syncCompleteFromScryfall = async (setCode: string) => {
-  try {
-    syncingComplete.value[setCode] = true
-    console.log('💯 Synchronisation complète depuis Scryfall pour:', setCode)
-
-    // Synchronisation complète avec pagination
-    const response = await axios.post(`/api/scryfall/sync-complete/${setCode}`)
-
-    if (response.data.success) {
-      showOperationStatus('success', `Synchronisation complète démarrée pour ${setCode}`)
-
-      // Attendre plus longtemps pour la sync complète (pagination)
-      setTimeout(async () => {
-        await refreshSetStatus(setCode)
-        await mtgStore.fetchSetByCode(setCode)
-        showOperationStatus('success', `Toutes les cartes récupérées pour ${setCode}`)
-      }, 10000) // 10 secondes pour la pagination
-    } else {
-      throw new Error(response.data.message)
-    }
-
-  } catch (error: any) {
-    console.error('❌ Erreur sync complète:', error)
-    showOperationStatus('error', `Erreur sync complète pour ${setCode}`)
-  } finally {
-    syncingComplete.value[setCode] = false
-  }
-}
-
-const syncFinalFantasyComplete = async () => {
-  try {
-    syncingFinalFantasy.value = true
-    console.log('🎮 Synchronisation Final Fantasy COMPLÈTE (toutes variantes)')
-
-    // Endpoint spécial pour Final Fantasy avec toutes les variantes
-    const response = await axios.post('/api/scryfall/sync-final-fantasy-complete')
-
-    if (response.data.success) {
-      showOperationStatus('success', 'Synchronisation Final Fantasy complète démarrée (objectif: 586 cartes)')
-
-      // Attendre plus longtemps pour la synchronisation complète avec variantes
-      setTimeout(async () => {
-        await refreshSetStatus('FIN')
-        await mtgStore.fetchSetByCode('FIN')
-        showOperationStatus('success', 'Final Fantasy synchronisé avec toutes les variantes!')
-      }, 15000) // 15 secondes pour laisser le temps à toutes les variantes
-    } else {
-      throw new Error(response.data.message)
-    }
-
-  } catch (error: any) {
-    console.error('❌ Erreur sync Final Fantasy complète:', error)
-    showOperationStatus('error', 'Erreur lors de la synchronisation Final Fantasy complète')
-  } finally {
-    syncingFinalFantasy.value = false
-  }
-}
-
-const downloadImages = async (setCode: string) => {
-  try {
-    downloadingImages.value[setCode] = true
-    console.log('📸 Téléchargement des images pour:', setCode)
-
-    // Déclencher le téléchargement des images
-    const response = await axios.post(`/api/images/download-set/${setCode}`)
-
-    if (response.status === 202) { // Accepted
-      showOperationStatus('success', `Téléchargement des images de ${setCode} démarré`)
-
-      // Optionnel : surveiller le progrès
-      setTimeout(() => checkDownloadProgress(setCode), 5000)
-    }
-
-  } catch (error: any) {
-    console.error('❌ Erreur téléchargement images:', error)
-    showOperationStatus('error', `Erreur lors du téléchargement des images de ${setCode}`)
-  } finally {
-    downloadingImages.value[setCode] = false
-  }
-}
-
-const debugPagination = async (setCode: string) => {
-  try {
-    debuggingPagination.value[setCode] = true
-    console.log('🔍 Debug pagination pour:', setCode)
-
-    // Test debug direct
-    const response = await axios.get(`/api/scryfall/debug-pagination-problem/${setCode}`)
-
-    console.log('🐛 Résultat debug:', response.data)
-
-    if (response.data.success) {
-      const data = response.data.data
-      const cardsReceived = data.cardsReceived || 0
-      const isPaginationWorking = data.isPaginationWorking || false
-
-      let message = `Debug ${setCode}: ${cardsReceived} cartes récupérées`
-      let type = 'success'
-
-      if (!isPaginationWorking && cardsReceived <= 175) {
-        message = `PROBLÈME: Seulement ${cardsReceived} cartes pour ${setCode} - Pagination échouée!`
-        type = 'error'
-      }
-
-      showOperationStatus(type, message)
-
-      // Afficher plus de détails dans la console
-      console.log('📊 Détails debug:', {
-        setCode,
-        cardsReceived,
-        isPaginationWorking,
-        problem: data.problem,
-        sampleCards: data.sampleCards
-      })
-    }
-
-  } catch (error: any) {
-    console.error('❌ Erreur debug pagination:', error)
-    showOperationStatus('error', `Erreur debug pagination ${setCode}`)
-  } finally {
-    debuggingPagination.value[setCode] = false
-  }
-}
-
-const debugFinPage1 = async () => {
-  try {
-    debuggingFin.value = true
-    console.log('🔍 Debug Final Fantasy page 1 RAW')
-
-    const response = await axios.get('/api/scryfall/debug-fin-raw-page1')
-    console.log('🐛 Debug FIN Page 1:', response.data)
-
-    if (response.data.success) {
-      const data = response.data.data
-      const totalCards = data.totalCards || 0
-      const page1Cards = data.dataArraySize || 0
-      const hasMore = data.hasMoreValue
-
-      const message = `FIN Page 1: ${page1Cards} cartes, total=${totalCards}, hasMore=${hasMore}`
-      showOperationStatus('success', message)
-
-      console.log('📊 Analyse FIN Page 1:', {
-        totalCards,
-        page1Cards,
-        hasMore,
-        analysis: data.analysis
-      })
-    }
-
-  } catch (error: any) {
-    console.error('❌ Erreur debug FIN page 1:', error)
-    showOperationStatus('error', 'Erreur debug FIN page 1')
-  } finally {
-    debuggingFin.value = false
-  }
-}
-
-const debugFinPagination = async () => {
-  try {
-    debuggingFin.value = true
-    console.log('📄 Debug Final Fantasy pagination complète')
-
-    const response = await axios.get('/api/scryfall/debug-fin-manual-pagination')
-    console.log('🐛 Debug FIN Pagination:', response.data)
-
-    if (response.data.success) {
-      const data = response.data.data
-      const totalFound = data.totalCardsFound || 0
-      const pagesSuccessful = data.pagesSuccessful || 0
-
-      const message = `FIN Pagination: ${totalFound} cartes sur ${pagesSuccessful} pages`
-      const type = totalFound >= 300 ? 'success' : 'error'
-      showOperationStatus(type, message)
-
-      console.log('📊 Analyse FIN Pagination:', {
-        totalFound,
-        pagesSuccessful,
-        analysis: data.analysis,
-        pages: data.pages
-      })
-    }
-
-  } catch (error: any) {
-    console.error('❌ Erreur debug FIN pagination:', error)
-    showOperationStatus('error', 'Erreur debug FIN pagination')
-  } finally {
-    debuggingFin.value = false
-  }
-}
-
-const checkDownloadProgress = async (setCode: string) => {
-  try {
-    const response = await axios.get('/api/images/stats')
-    console.log('📊 Statistiques téléchargement:', response.data)
-  } catch (error) {
-    console.error('❌ Erreur vérification progrès:', error)
-  }
-}
-
-const refreshSetStatus = async (setCode: string) => {
-  try {
-    const response = await axios.get(`/api/mtg/sets/${setCode}/with-cards`)
-    if (response.data.success) {
-      // Mettre à jour l'extension dans la liste
-      const setIndex = allSets.value.findIndex(s => s.code === setCode)
-      if (setIndex !== -1) {
-        allSets.value[setIndex] = {
-          ...allSets.value[setIndex],
-          cardsCount: response.data.data.totalCards,
-          cardsSynced: response.data.data.cardsSynced
-        }
-      }
-    }
-  } catch (error) {
-    console.error('❌ Erreur refresh statut:', error)
-  }
-}
-
-const showOperationStatus = (type: string, message: string) => {
-  operationStatus.value = { type, message }
-  // Auto-fermer après 5 secondes
-  setTimeout(() => {
-    operationStatus.value = null
-  }, 5000)
-}
-
-const formatDate = (dateString: string): string => {
-  try {
-    return new Date(dateString).toLocaleDateString('fr-FR')
-  } catch {
-    return dateString
-  }
-}
-
-
-// Ajoutez cette fonction dans la section des méthodes de SetSelector.vue
-
-const diagnosticFinComplete = async () => {
-  try {
-    debuggingFin.value = true
-    console.log('🔬 Diagnostic complet Final Fantasy - 312 vs 586 cartes')
-
-    const response = await axios.get('/api/scryfall/diagnostic-fin-complete')
-    console.log('🎯 Diagnostic FIN complet:', response.data)
-
-    if (response.data.success) {
-      const data = response.data.data
-      const maxCardsFound = data.maxCardsFound || 0
-      const bestQuery = data.bestQuery || 'Aucune'
-      const analysis = data.analysis || {}
-
-      let message = `Diagnostic FIN: ${maxCardsFound} cartes max trouvées`
-      let type = 'success'
-
-      if (maxCardsFound >= 586) {
-        message = `🎉 SOLUTION TROUVÉE! ${maxCardsFound} cartes disponibles avec la bonne requête!`
-        type = 'success'
-      } else if (maxCardsFound > 312) {
-        message = `📈 AMÉLIORATION: ${maxCardsFound} cartes vs 312 actuelles - Requête optimisée disponible!`
-        type = 'success'
-      } else {
-        message = `❌ LIMITATION: Maximum ${maxCardsFound} cartes disponibles sur Scryfall`
-        type = 'error'
-      }
-
-      showOperationStatus(type, message)
-
-      // Afficher les détails dans la console pour debug
-      console.log('📊 Analyse détaillée FIN:', {
-        objectif: 586,
-        maxTrouve: maxCardsFound,
-        meilleureRequete: bestQuery,
-        analyse: analysis,
-        recommandations: data.recommendations
-      })
-
-      // Si on a trouvé une meilleure solution, proposer de l'utiliser
-      if (maxCardsFound > 312) {
-        console.log('🚀 SOLUTION AMÉLIORÉE DISPONIBLE!')
-        console.log('📋 Recommandations:', data.recommendations)
-        console.log('🔗 Meilleure requête:', bestQuery)
-
-        // Optionnel: déclencher automatiquement la sync avec la meilleure méthode
-        if (maxCardsFound >= 500) {
-          setTimeout(() => {
-            console.log('🎯 Déclenchement automatique de la sync optimisée...')
-            syncFinalFantasyComplete()
-          }, 3000)
-        }
-      }
-
-    } else {
-      showOperationStatus('error', 'Erreur lors du diagnostic FIN')
-    }
-
-  } catch (error: any) {
-    console.error('❌ Erreur diagnostic FIN complet:', error)
-    showOperationStatus('error', 'Erreur diagnostic FIN complet')
-  } finally {
-    debuggingFin.value = false
-  }
-}
-
-
-
-// Lifecycle
-onMounted(() => {
-  console.log('🎛️ SetSelector monté avec fonctionnalités avancées')
+const paginatedSets = computed(() => {
+  const start = (currentPage.value - 1) * itemsPerPage
+  const end = start + itemsPerPage
+  return filteredAndSortedSets.value.slice(start, end)
+})
+
+const totalPages = computed(() => {
+  return Math.ceil(filteredAndSortedSets.value.length / itemsPerPage)
 })
 </script>
 
+
+
 <style scoped>
 .set-selector {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.8);
   border-radius: 12px;
   padding: 1.5rem;
   margin-bottom: 2rem;
   backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .selector-header {
@@ -761,23 +666,25 @@ onMounted(() => {
 }
 
 .selector-header h3 {
-  color: #ffd700;
   margin: 0;
+  color: #ffd700;
+  font-size: 1.4rem;
 }
 
 .toggle-button {
-  padding: 0.5rem 1rem;
-  background: #3498db;
+  background: linear-gradient(45deg, #3498db, #2980b9);
   color: white;
   border: none;
+  padding: 0.5rem 1rem;
   border-radius: 6px;
   cursor: pointer;
+  font-weight: 600;
   transition: all 0.3s ease;
 }
 
 .toggle-button:hover {
-  background: #2980b9;
-  transform: translateY(-1px);
+  background: linear-gradient(45deg, #2980b9, #1abc9c);
+  transform: translateY(-2px);
 }
 
 .selector-content {
@@ -791,15 +698,16 @@ onMounted(() => {
 .search-input {
   width: 100%;
   padding: 0.75rem;
-  border: 2px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.1);
   color: white;
   font-size: 1rem;
+  backdrop-filter: blur(5px);
 }
 
 .search-input::placeholder {
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .search-input:focus {
@@ -831,7 +739,7 @@ onMounted(() => {
 
 .sets-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
@@ -913,15 +821,15 @@ onMounted(() => {
 .set-block {
   margin: 0.25rem 0;
   font-size: 0.9rem;
-  opacity: 0.9;
+  opacity: 0.8;
 }
 
 .cards-status {
   display: flex;
   gap: 0.5rem;
   align-items: center;
-  margin-top: 0.5rem;
   flex-wrap: wrap;
+  margin: 0.5rem 0;
 }
 
 .cards-count {
@@ -955,6 +863,7 @@ onMounted(() => {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .load-button,
@@ -962,8 +871,7 @@ onMounted(() => {
 .complete-button,
 .save-button,
 .download-button,
-.debug-button,
-.final-fantasy-button {
+.debug-button {
   flex: 1;
   min-width: 70px;
   padding: 0.5rem;
@@ -971,7 +879,7 @@ onMounted(() => {
   border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   transition: all 0.3s ease;
   display: flex;
   align-items: center;
@@ -989,37 +897,119 @@ onMounted(() => {
   color: white;
 }
 
-.complete-button {
+.download-button {
   background: linear-gradient(45deg, #e67e22, #d35400);
   color: white;
 }
 
-.save-button {
-  background: linear-gradient(45deg, #27ae60, #229954);
-  color: white;
-}
-
-.download-button {
-  background: linear-gradient(45deg, #f39c12, #e67e22);
-  color: white;
-}
-
 .debug-button {
-  background: linear-gradient(45deg, #9b59b6, #8e44ad);
+  background: linear-gradient(45deg, #95a5a6, #7f8c8d);
   color: white;
+}
+
+/* NOUVEAUX STYLES pour les boutons FIN */
+.sync-advanced-fin-button {
+  background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+  color: white;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 12px;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  margin: 2px;
+  flex: 1;
+  min-width: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+}
+
+.sync-advanced-fin-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.sync-advanced-fin-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.diagnostic-fin-button {
+  background: linear-gradient(45deg, #9b59b6, #3498db);
+  color: white;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 12px;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  margin: 2px;
+  flex: 1;
+  min-width: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+}
+
+.diagnostic-fin-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.diagnostic-fin-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.fin-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.fin-status .cards-count.incomplete {
+  background: rgba(243, 156, 18, 0.2);
+  color: #f39c12;
+}
+
+.fin-status .cards-count.complete {
+  background: rgba(39, 174, 96, 0.2);
+  color: #27ae60;
+  font-weight: bold;
+}
+
+.success-badge {
+  color: #27ae60;
+  font-size: 1rem;
+}
+
+.warning-badge {
+  color: #f39c12;
+  font-size: 1rem;
+}
+
+.nearly-badge {
+  color: #f39c12;
+  font-size: 1rem;
+}
+
+.set-note {
+  color: rgba(255, 255, 255, 0.6);
   font-size: 0.7rem;
-}
-
-.debug-button:hover:not(:disabled) {
-  background: linear-gradient(45deg, #8e44ad, #7d3c98);
-}
-
-.final-fantasy-button {
-  background: linear-gradient(45deg, #ff6b9d, #c44569);
-  color: white;
-  border: 2px solid #ff3838;
-  font-weight: 700;
-  text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+  font-style: italic;
 }
 
 .load-button:hover:not(:disabled),
@@ -1027,7 +1017,7 @@ onMounted(() => {
 .complete-button:hover:not(:disabled),
 .save-button:hover:not(:disabled),
 .download-button:hover:not(:disabled),
-.final-fantasy-button:hover:not(:disabled) {
+.debug-button:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
@@ -1037,8 +1027,7 @@ onMounted(() => {
 .complete-button:disabled,
 .save-button:disabled,
 .download-button:disabled,
-.debug-button:disabled,
-.final-fantasy-button:disabled {
+.debug-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -1063,6 +1052,18 @@ onMounted(() => {
   background: rgba(231, 76, 60, 0.2);
   border: 1px solid #e74c3c;
   color: #e74c3c;
+}
+
+.operation-status.warning {
+  background: rgba(243, 156, 18, 0.2);
+  border: 1px solid #f39c12;
+  color: #f39c12;
+}
+
+.operation-status.info {
+  background: rgba(52, 152, 219, 0.2);
+  border: 1px solid #3498db;
+  color: #3498db;
 }
 
 .close-status {
@@ -1147,7 +1148,8 @@ onMounted(() => {
   .save-button,
   .download-button,
   .debug-button,
-  .final-fantasy-button {
+  .sync-advanced-fin-button,
+  .diagnostic-fin-button {
     min-width: auto;
   }
 
@@ -1158,68 +1160,5 @@ onMounted(() => {
   .filter-select {
     min-width: auto;
   }
-}
-/* Nouveau style pour les boutons debug FIN */
-.debug-fin-button {
-  flex: 1;
-  min-width: 70px;
-  padding: 0.5rem;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.7rem;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.25rem;
-  background: linear-gradient(45deg, #ff6b9d, #c44569);
-  color: white;
-  border: 1px solid #ff3838;
-}
-
-.debug-fin-button:hover:not(:disabled) {
-  background: linear-gradient(45deg, #c44569, #8e2638);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(255, 56, 56, 0.3);
-}
-
-.debug-fin-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.diagnostic-fin-button {
-  flex: 1;
-  min-width: 80px;
-  padding: 0.5rem;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 700;
-  font-size: 0.7rem;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.25rem;
-  background: linear-gradient(45deg, #ff4757, #ff3742);
-  color: white;
-  border: 2px solid #ff6b9d;
-  text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
-  box-shadow: 0 2px 8px rgba(255, 71, 87, 0.3);
-}
-
-.diagnostic-fin-button:hover:not(:disabled) {
-  background: linear-gradient(45deg, #ff3742, #ff2f3a);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(255, 71, 87, 0.4);
-  border-color: #ff4757;
-}
-
-.diagnostic-fin-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 </style>
