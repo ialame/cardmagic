@@ -1637,4 +1637,584 @@ public class ScryfallController {
                     .body(ApiResponse.error("Erreur : " + e.getMessage()));
         }
     }
+
+    // Ajoutez ces méthodes dans votre ScryfallController.java
+
+    /**
+     * Debug spécifique FIN Page 1 RAW
+     */
+    @GetMapping("/debug-fin-raw-page1")
+    public ResponseEntity<ApiResponse<Object>> debugFinRawPage1() {
+        try {
+            logger.info("🎮 Debug Final Fantasy Page 1 RAW");
+
+            RestTemplate restTemplate = new RestTemplate();
+            ObjectMapper mapper = new ObjectMapper();
+
+            String url = "https://api.scryfall.com/cards/search?q=set:fin&format=json&order=name";
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("url", url);
+            result.put("timestamp", LocalDateTime.now());
+
+            try {
+                String response = restTemplate.getForObject(url, String.class);
+
+                if (response != null) {
+                    JsonNode root = mapper.readTree(response);
+
+                    result.put("success", true);
+                    result.put("responseLength", response.length());
+                    result.put("hasType", root.has("type"));
+                    result.put("hasData", root.has("data"));
+                    result.put("hasDetails", root.has("details"));
+                    result.put("hasTotalCards", root.has("total_cards"));
+                    result.put("hasHasMore", root.has("has_more"));
+
+                    if (root.has("type")) {
+                        result.put("type", root.get("type").asText());
+                    }
+
+                    if (root.has("details")) {
+                        result.put("details", root.get("details").asText());
+                    }
+
+                    if (root.has("total_cards")) {
+                        result.put("totalCards", root.get("total_cards").asInt());
+                    }
+
+                    if (root.has("has_more")) {
+                        result.put("hasMoreValue", root.get("has_more").asBoolean());
+                    }
+
+                    if (root.has("data") && root.get("data").isArray()) {
+                        JsonNode dataArray = root.get("data");
+                        result.put("dataIsArray", true);
+                        result.put("dataArraySize", dataArray.size());
+
+                        // Échantillon de noms
+                        List<String> sampleNames = new ArrayList<>();
+                        for (int i = 0; i < Math.min(5, dataArray.size()); i++) {
+                            JsonNode card = dataArray.get(i);
+                            if (card.has("name")) {
+                                sampleNames.add(card.get("name").asText());
+                            }
+                        }
+                        result.put("sampleCards", sampleNames);
+                    } else {
+                        result.put("dataIsArray", false);
+                        result.put("dataArraySize", 0);
+                    }
+
+                    // Analyse
+                    Map<String, Object> analysis = new HashMap<>();
+                    boolean isError = root.has("type") && "error".equals(root.get("type").asText());
+                    int totalCards = root.has("total_cards") ? root.get("total_cards").asInt() : 0;
+                    int page1Cards = root.has("data") && root.get("data").isArray() ? root.get("data").size() : 0;
+                    boolean hasMore = root.has("has_more") && root.get("has_more").asBoolean();
+
+                    analysis.put("isError", isError);
+                    analysis.put("totalCards", totalCards);
+                    analysis.put("page1Cards", page1Cards);
+                    analysis.put("hasMore", hasMore);
+                    analysis.put("expectedTarget", 586);
+                    analysis.put("isCloseToTarget", totalCards >= 500);
+
+                    if (isError) {
+                        analysis.put("problem", "Extension FIN non trouvée sur Scryfall");
+                    } else if (totalCards == 0) {
+                        analysis.put("problem", "Aucune carte trouvée");
+                    } else if (totalCards < 300) {
+                        analysis.put("problem", "Trop peu de cartes - probable problème de filtre");
+                    } else if (totalCards >= 500) {
+                        analysis.put("problem", "Bon nombre de cartes trouvées!");
+                    }
+
+                    result.put("analysis", analysis);
+                } else {
+                    result.put("success", false);
+                    result.put("error", "Réponse nulle de Scryfall");
+                }
+
+            } catch (Exception e) {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+                result.put("errorType", e.getClass().getSimpleName());
+            }
+
+            return ResponseEntity.ok(ApiResponse.success(result, "Debug FIN Page 1 terminé"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur debug FIN page 1 : {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Debug spécifique FIN Pagination Manuelle
+     */
+    @GetMapping("/debug-fin-manual-pagination")
+    public ResponseEntity<ApiResponse<Object>> debugFinManualPagination() {
+        try {
+            logger.info("📄 Debug Final Fantasy Pagination Manuelle");
+
+            RestTemplate restTemplate = new RestTemplate();
+            ObjectMapper mapper = new ObjectMapper();
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("setCode", "FIN");
+            result.put("timestamp", LocalDateTime.now());
+
+            List<Map<String, Object>> pages = new ArrayList<>();
+            int totalCards = 0;
+            int page = 1;
+
+            // Tester différentes approches
+            String[] searchQueries = {
+                    "https://api.scryfall.com/cards/search?q=set:fin&format=json&order=name&page=",
+                    "https://api.scryfall.com/cards/search?q=set:\"Final Fantasy\"&format=json&order=name&page=",
+                    "https://api.scryfall.com/cards/search?q=set:fin&include_extras=true&include_variations=true&format=json&order=name&page="
+            };
+
+            String bestQuery = null;
+            int maxCardsFound = 0;
+
+            // Tester chaque requête sur la première page
+            for (String baseQuery : searchQueries) {
+                Map<String, Object> queryTest = new HashMap<>();
+                String testUrl = baseQuery + "1";
+                queryTest.put("url", testUrl);
+
+                try {
+                    String response = restTemplate.getForObject(testUrl, String.class);
+
+                    if (response != null) {
+                        JsonNode root = mapper.readTree(response);
+
+                        if (root.has("type") && "error".equals(root.get("type").asText())) {
+                            queryTest.put("success", false);
+                            queryTest.put("error", root.has("details") ? root.get("details").asText() : "Erreur");
+                        } else {
+                            int totalReported = root.has("total_cards") ? root.get("total_cards").asInt() : 0;
+                            queryTest.put("success", true);
+                            queryTest.put("totalCards", totalReported);
+
+                            if (totalReported > maxCardsFound) {
+                                maxCardsFound = totalReported;
+                                bestQuery = baseQuery;
+                            }
+                        }
+                    } else {
+                        queryTest.put("success", false);
+                        queryTest.put("error", "Réponse nulle");
+                    }
+
+                } catch (Exception e) {
+                    queryTest.put("success", false);
+                    queryTest.put("error", e.getMessage());
+                }
+
+                pages.add(Map.of("queryTest", queryTest));
+            }
+
+            result.put("bestQuery", bestQuery);
+            result.put("maxCardsReported", maxCardsFound);
+
+            // Si on a trouvé une bonne requête, tester la pagination
+            if (bestQuery != null && maxCardsFound > 0) {
+                List<Map<String, Object>> paginationPages = new ArrayList<>();
+                totalCards = 0;
+                page = 1;
+
+                while (page <= 5 && totalCards < maxCardsFound) {
+                    String url = bestQuery + page;
+
+                    Map<String, Object> pageInfo = new HashMap<>();
+                    pageInfo.put("pageNumber", page);
+                    pageInfo.put("url", url);
+
+                    try {
+                        String response = restTemplate.getForObject(url, String.class);
+
+                        if (response != null) {
+                            JsonNode root = mapper.readTree(response);
+
+                            if (root.has("type") && "error".equals(root.get("type").asText())) {
+                                pageInfo.put("success", false);
+                                pageInfo.put("error", root.has("details") ? root.get("details").asText() : "Erreur");
+
+                                if (root.get("details").asText().contains("didn't match any cards") && totalCards > 0) {
+                                    pageInfo.put("normalEnd", true);
+                                }
+                                break;
+                            } else {
+                                pageInfo.put("success", true);
+
+                                if (root.has("data") && root.get("data").isArray()) {
+                                    int pageCards = root.get("data").size();
+                                    totalCards += pageCards;
+
+                                    pageInfo.put("cardsInPage", pageCards);
+                                    pageInfo.put("runningTotal", totalCards);
+                                    pageInfo.put("hasMore", root.has("has_more") && root.get("has_more").asBoolean());
+
+                                    if (pageCards < 175) {
+                                        pageInfo.put("likelyLastPage", true);
+                                        paginationPages.add(pageInfo);
+                                        break;
+                                    }
+                                }
+                            }
+                        } else {
+                            pageInfo.put("success", false);
+                            pageInfo.put("error", "Réponse nulle");
+                            break;
+                        }
+
+                    } catch (Exception e) {
+                        pageInfo.put("success", false);
+                        pageInfo.put("error", e.getMessage());
+
+                        if (e.getMessage().contains("404") && totalCards > 0) {
+                            pageInfo.put("normalEnd", true);
+                        }
+                        break;
+                    }
+
+                    paginationPages.add(pageInfo);
+                    page++;
+
+                    // Délai entre pages
+                    try {
+                        Thread.sleep(200);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+
+                result.put("paginationPages", paginationPages);
+            }
+
+            result.put("totalCardsFound", totalCards);
+            result.put("pagesSuccessful", page - 1);
+
+            // Analyse finale
+            Map<String, Object> analysis = new HashMap<>();
+            analysis.put("target", 586);
+            analysis.put("foundCards", totalCards);
+            analysis.put("success", totalCards >= 300);
+            analysis.put("percentage", maxCardsFound > 0 ? (double) totalCards / maxCardsFound * 100 : 0);
+
+            if (totalCards >= 500) {
+                analysis.put("conclusion", "EXCELLENT: " + totalCards + " cartes trouvées sur " + maxCardsFound + " attendues");
+            } else if (totalCards >= 300) {
+                analysis.put("conclusion", "BON: " + totalCards + " cartes trouvées, mais pagination incomplète");
+            } else {
+                analysis.put("conclusion", "PROBLÈME: Seulement " + totalCards + " cartes trouvées");
+            }
+
+            result.put("analysis", analysis);
+
+            return ResponseEntity.ok(ApiResponse.success(result,
+                    "Debug FIN Pagination terminé - " + totalCards + " cartes trouvées"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur debug FIN pagination : {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur : " + e.getMessage()));
+        }
+    }
+
+// Ajoutez cet endpoint dans votre ScryfallController pour diagnostiquer le problème 312/586
+
+    /**
+     * Diagnostic COMPLET Final Fantasy - Pourquoi seulement 312 cartes au lieu de 586 ?
+     */
+    @GetMapping("/diagnostic-fin-complete")
+    public ResponseEntity<ApiResponse<Object>> diagnosticFinComplete() {
+        try {
+            logger.info("🎮 DIAGNOSTIC COMPLET Final Fantasy - Objectif: 586 cartes");
+
+            RestTemplate restTemplate = new RestTemplate();
+            ObjectMapper mapper = new ObjectMapper();
+
+            Map<String, Object> diagnostic = new HashMap<>();
+            diagnostic.put("objectif", 586);
+            diagnostic.put("problemeActuel", "Seulement 312 cartes récupérées");
+            diagnostic.put("timestamp", LocalDateTime.now());
+
+            // 1. TEST ENDPOINT /sets POUR VOIR LES INFOS OFFICIELLES
+            Map<String, Object> setEndpointTest = new HashMap<>();
+            try {
+                String setUrl = "https://api.scryfall.com/sets/fin";
+                String setResponse = restTemplate.getForObject(setUrl, String.class);
+
+                if (setResponse != null) {
+                    JsonNode setRoot = mapper.readTree(setResponse);
+                    setEndpointTest.put("success", true);
+                    setEndpointTest.put("name", setRoot.has("name") ? setRoot.get("name").asText() : "N/A");
+                    setEndpointTest.put("officialCardCount", setRoot.has("card_count") ? setRoot.get("card_count").asInt() : 0);
+                    setEndpointTest.put("releaseDate", setRoot.has("released_at") ? setRoot.get("released_at").asText() : "N/A");
+                    setEndpointTest.put("setType", setRoot.has("set_type") ? setRoot.get("set_type").asText() : "N/A");
+
+                    // Infos importantes pour comprendre les variantes
+                    setEndpointTest.put("hasDigitalOnly", setRoot.has("digital") && setRoot.get("digital").asBoolean());
+                    setEndpointTest.put("hasFoilOnly", setRoot.has("foil_only") && setRoot.get("foil_only").asBoolean());
+                    setEndpointTest.put("hasNonfoilOnly", setRoot.has("nonfoil_only") && setRoot.get("nonfoil_only").asBoolean());
+                }
+            } catch (Exception e) {
+                setEndpointTest.put("success", false);
+                setEndpointTest.put("error", e.getMessage());
+            }
+            diagnostic.put("setEndpointInfo", setEndpointTest);
+
+            // 2. TESTS AVEC DIFFÉRENTS PARAMÈTRES DE RECHERCHE
+            Map<String, String> searchVariants = new LinkedHashMap<>();
+            searchVariants.put("basic", "https://api.scryfall.com/cards/search?q=set:fin&format=json");
+            searchVariants.put("unique_cards", "https://api.scryfall.com/cards/search?q=set:fin&unique=cards&format=json");
+            searchVariants.put("unique_prints", "https://api.scryfall.com/cards/search?q=set:fin&unique=prints&format=json");
+            searchVariants.put("include_extras", "https://api.scryfall.com/cards/search?q=set:fin&include_extras=true&format=json");
+            searchVariants.put("include_variations", "https://api.scryfall.com/cards/search?q=set:fin&include_variations=true&format=json");
+            searchVariants.put("include_multilingual", "https://api.scryfall.com/cards/search?q=set:fin&include_multilingual=true&format=json");
+            searchVariants.put("all_options", "https://api.scryfall.com/cards/search?q=set:fin&include_extras=true&include_variations=true&include_multilingual=true&format=json");
+            searchVariants.put("unique_art", "https://api.scryfall.com/cards/search?q=set:fin&unique=art&format=json");
+            searchVariants.put("all_prints_extras", "https://api.scryfall.com/cards/search?q=set:fin&unique=prints&include_extras=true&include_variations=true&format=json");
+
+            Map<String, Object> searchResults = new HashMap<>();
+            String bestQuery = null;
+            int maxCardsFound = 0;
+
+            for (Map.Entry<String, String> variant : searchVariants.entrySet()) {
+                String variantName = variant.getKey();
+                String url = variant.getValue();
+
+                Map<String, Object> variantResult = new HashMap<>();
+                variantResult.put("url", url);
+
+                try {
+                    String response = restTemplate.getForObject(url, String.class);
+
+                    if (response != null) {
+                        JsonNode root = mapper.readTree(response);
+
+                        if (root.has("type") && "error".equals(root.get("type").asText())) {
+                            variantResult.put("success", false);
+                            variantResult.put("error", root.has("details") ? root.get("details").asText() : "Erreur inconnue");
+                        } else {
+                            int totalCards = root.has("total_cards") ? root.get("total_cards").asInt() : 0;
+                            int firstPageCards = root.has("data") && root.get("data").isArray() ? root.get("data").size() : 0;
+                            boolean hasMore = root.has("has_more") && root.get("has_more").asBoolean();
+
+                            variantResult.put("success", true);
+                            variantResult.put("totalCards", totalCards);
+                            variantResult.put("firstPageCards", firstPageCards);
+                            variantResult.put("hasMore", hasMore);
+                            variantResult.put("closeTo586", totalCards >= 580);
+
+                            // Échantillon de cartes pour voir les types
+                            if (root.has("data") && root.get("data").isArray() && root.get("data").size() > 0) {
+                                List<Map<String, Object>> sample = new ArrayList<>();
+                                JsonNode dataArray = root.get("data");
+                                for (int i = 0; i < Math.min(3, dataArray.size()); i++) {
+                                    JsonNode card = dataArray.get(i);
+                                    Map<String, Object> cardInfo = new HashMap<>();
+                                    cardInfo.put("name", card.has("name") ? card.get("name").asText() : "N/A");
+                                    cardInfo.put("collectorNumber", card.has("collector_number") ? card.get("collector_number").asText() : "N/A");
+                                    cardInfo.put("rarity", card.has("rarity") ? card.get("rarity").asText() : "N/A");
+                                    cardInfo.put("lang", card.has("lang") ? card.get("lang").asText() : "N/A");
+                                    cardInfo.put("foil", card.has("foil") && card.get("foil").asBoolean());
+                                    cardInfo.put("nonfoil", card.has("nonfoil") && card.get("nonfoil").asBoolean());
+                                    cardInfo.put("finishes", card.has("finishes") ? card.get("finishes").toString() : "N/A");
+                                    sample.add(cardInfo);
+                                }
+                                variantResult.put("sampleCards", sample);
+                            }
+
+                            if (totalCards > maxCardsFound) {
+                                maxCardsFound = totalCards;
+                                bestQuery = url;
+                            }
+                        }
+                    } else {
+                        variantResult.put("success", false);
+                        variantResult.put("error", "Réponse nulle");
+                    }
+
+                } catch (Exception e) {
+                    variantResult.put("success", false);
+                    variantResult.put("error", e.getMessage());
+                }
+
+                searchResults.put(variantName, variantResult);
+            }
+
+            diagnostic.put("searchVariants", searchResults);
+            diagnostic.put("bestQuery", bestQuery);
+            diagnostic.put("maxCardsFound", maxCardsFound);
+
+            // 3. TEST DE PAGINATION COMPLÈTE AVEC LA MEILLEURE REQUÊTE
+            Map<String, Object> paginationTest = new HashMap<>();
+            if (bestQuery != null && maxCardsFound > 312) {
+                logger.info("🔄 Test pagination avec la meilleure requête: {}", bestQuery);
+
+                List<Map<String, Object>> pages = new ArrayList<>();
+                int totalCardsCollected = 0;
+                int pageNum = 1;
+                String currentUrl = bestQuery;
+
+                while (currentUrl != null && pageNum <= 10) { // Max 10 pages
+                    Map<String, Object> pageInfo = new HashMap<>();
+                    pageInfo.put("pageNumber", pageNum);
+                    pageInfo.put("url", currentUrl);
+
+                    try {
+                        String response = restTemplate.getForObject(currentUrl, String.class);
+
+                        if (response != null) {
+                            JsonNode root = mapper.readTree(response);
+
+                            if (root.has("type") && "error".equals(root.get("type").asText())) {
+                                pageInfo.put("success", false);
+                                pageInfo.put("error", root.has("details") ? root.get("details").asText() : "Erreur");
+
+                                // Si erreur 404 et qu'on a déjà des cartes, c'est normal
+                                if (root.get("details").asText().contains("didn't match any cards") && totalCardsCollected > 0) {
+                                    pageInfo.put("normalEnd", true);
+                                }
+                                break;
+                            } else {
+                                int pageCards = root.has("data") && root.get("data").isArray() ? root.get("data").size() : 0;
+                                totalCardsCollected += pageCards;
+
+                                pageInfo.put("success", true);
+                                pageInfo.put("cardsInPage", pageCards);
+                                pageInfo.put("runningTotal", totalCardsCollected);
+                                pageInfo.put("hasMore", root.has("has_more") && root.get("has_more").asBoolean());
+
+                                // Analyser les types de cartes de cette page
+                                if (root.has("data") && root.get("data").isArray()) {
+                                    JsonNode dataArray = root.get("data");
+                                    Map<String, Integer> rarityCount = new HashMap<>();
+                                    Map<String, Integer> finishCount = new HashMap<>();
+
+                                    for (JsonNode card : dataArray) {
+                                        String rarity = card.has("rarity") ? card.get("rarity").asText() : "unknown";
+                                        rarityCount.put(rarity, rarityCount.getOrDefault(rarity, 0) + 1);
+
+                                        boolean foil = card.has("foil") && card.get("foil").asBoolean();
+                                        boolean nonfoil = card.has("nonfoil") && card.get("nonfoil").asBoolean();
+                                        String finish = foil && nonfoil ? "both" : foil ? "foil" : "nonfoil";
+                                        finishCount.put(finish, finishCount.getOrDefault(finish, 0) + 1);
+                                    }
+
+                                    pageInfo.put("rarityBreakdown", rarityCount);
+                                    pageInfo.put("finishBreakdown", finishCount);
+                                }
+
+                                // URL de la page suivante
+                                if (root.has("next_page") && !root.get("next_page").isNull()) {
+                                    currentUrl = root.get("next_page").asText();
+                                } else {
+                                    currentUrl = null;
+                                }
+
+                                // Si moins de 175 cartes, probablement la dernière page
+                                if (pageCards < 175) {
+                                    pageInfo.put("likelyLastPage", true);
+                                    pages.add(pageInfo);
+                                    break;
+                                }
+                            }
+                        } else {
+                            pageInfo.put("success", false);
+                            pageInfo.put("error", "Réponse nulle");
+                            break;
+                        }
+
+                    } catch (Exception e) {
+                        pageInfo.put("success", false);
+                        pageInfo.put("error", e.getMessage());
+                        break;
+                    }
+
+                    pages.add(pageInfo);
+                    pageNum++;
+
+                    // Délai entre pages
+                    try {
+                        Thread.sleep(200);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+
+                paginationTest.put("pages", pages);
+                paginationTest.put("totalCardsCollected", totalCardsCollected);
+                paginationTest.put("pagesProcessed", pageNum - 1);
+            }
+
+            diagnostic.put("paginationTest", paginationTest);
+
+            // 4. ANALYSE FINALE
+            Map<String, Object> analysis = new HashMap<>();
+            analysis.put("problemeIdentifie", maxCardsFound <= 312 ? "FILTRAGE_INSUFFISANT" : "PAGINATION_INCOMPLETE");
+
+            if (maxCardsFound >= 586) {
+                analysis.put("solution", "EXCELLENT - Une requête trouve " + maxCardsFound + " cartes!");
+                analysis.put("actionRecommandee", "Utiliser la requête: " + bestQuery);
+            } else if (maxCardsFound > 312) {
+                analysis.put("solution", "PROGRÈS - " + maxCardsFound + " cartes trouvées vs 312 actuelles");
+                analysis.put("actionRecommandee", "Implémenter la pagination complète avec: " + bestQuery);
+            } else {
+                analysis.put("solution", "PROBLÈME DE FILTRAGE - Toutes les requêtes donnent max " + maxCardsFound + " cartes");
+                analysis.put("actionRecommandee", "Vérifier si l'extension FIN est complète sur Scryfall ou explorer d'autres paramètres");
+            }
+
+            // Comparer avec les données de l'endpoint /sets
+            Object setInfo = diagnostic.get("setEndpointInfo");
+            if (setInfo instanceof Map) {
+                Map<String, Object> setInfoMap = (Map<String, Object>) setInfo;
+                if (setInfoMap.containsKey("officialCardCount")) {
+                    int officialCount = (Integer) setInfoMap.get("officialCardCount");
+                    analysis.put("officialVsFound", "Officiel: " + officialCount + " vs Trouvé: " + maxCardsFound);
+
+                    if (officialCount != 586) {
+                        analysis.put("warning", "L'endpoint /sets indique " + officialCount + " cartes, pas 586!");
+                    }
+                }
+            }
+
+            diagnostic.put("analysis", analysis);
+
+            // 5. RECOMMANDATIONS SPÉCIFIQUES
+            List<String> recommendations = new ArrayList<>();
+
+            if (maxCardsFound >= 580) {
+                recommendations.add("✅ SUCCÈS: Utiliser la requête qui trouve " + maxCardsFound + " cartes");
+                recommendations.add("🔄 Implémenter la pagination avec cette requête dans ScryfallService");
+            } else if (maxCardsFound > 312) {
+                recommendations.add("📈 AMÉLIORATION: Passer de 312 à " + maxCardsFound + " cartes");
+                recommendations.add("🔧 Modifier ScryfallService pour utiliser: " + bestQuery);
+                recommendations.add("🔄 Vérifier que la pagination suit les next_page correctement");
+            } else {
+                recommendations.add("❌ LIMITATION: Aucune requête ne dépasse " + maxCardsFound + " cartes");
+                recommendations.add("🔍 Vérifier si Final Fantasy est complètement disponible sur Scryfall");
+                recommendations.add("📅 Possibilité que toutes les cartes ne soient pas encore publiées");
+            }
+
+            diagnostic.put("recommendations", recommendations);
+
+            return ResponseEntity.ok(ApiResponse.success(diagnostic,
+                    "Diagnostic Final Fantasy terminé - Max " + maxCardsFound + " cartes trouvées"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur diagnostic FIN complet : {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur diagnostic : " + e.getMessage()));
+        }
+    }
+
 }

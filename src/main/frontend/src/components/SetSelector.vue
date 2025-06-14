@@ -71,6 +71,8 @@
             </div>
           </div>
 
+          <!-- Remplacement complet de la section set-actions dans votre template -->
+
           <div class="set-actions">
             <!-- Bouton Charger (MTG API + Scryfall fallback) -->
             <button
@@ -156,7 +158,46 @@
               <span v-else>🐛</span>
               {{ debuggingPagination[set.code] ? 'Debug...' : 'Debug' }}
             </button>
+
+            <!-- NOUVEAUX BOUTONS SPÉCIFIQUES FINAL FANTASY -->
+            <button
+              v-if="set.code === 'FIN'"
+              @click.stop="debugFinPage1()"
+              :disabled="debuggingFin"
+              class="debug-fin-button"
+              title="Debug FIN Page 1 RAW"
+            >
+              <span v-if="debuggingFin">🔍</span>
+              <span v-else>🎮</span>
+              {{ debuggingFin ? 'FIN P1...' : 'FIN P1' }}
+            </button>
+
+            <button
+              v-if="set.code === 'FIN'"
+              @click.stop="debugFinPagination()"
+              :disabled="debuggingFin"
+              class="debug-fin-button"
+              title="Debug FIN Pagination Complète"
+            >
+              <span v-if="debuggingFin">📄</span>
+              <span v-else>📋</span>
+              {{ debuggingFin ? 'FIN Pag...' : 'FIN Pag' }}
+            </button>
+
+            <!-- Bouton Diagnostic Complet FIN -->
+            <button
+              v-if="set.code === 'FIN'"
+              @click.stop="diagnosticFinComplete()"
+              :disabled="debuggingFin"
+              class="diagnostic-fin-button"
+              title="Diagnostic complet FIN - Pourquoi 312 au lieu de 586 cartes ?"
+            >
+              <span v-if="debuggingFin">🔬</span>
+              <span v-else>🎯</span>
+              {{ debuggingFin ? 'Diagnost...' : '312→586?' }}
+            </button>
           </div>
+
         </div>
       </div>
 
@@ -626,6 +667,77 @@ const formatDate = (dateString: string): string => {
   }
 }
 
+
+// Ajoutez cette fonction dans la section des méthodes de SetSelector.vue
+
+const diagnosticFinComplete = async () => {
+  try {
+    debuggingFin.value = true
+    console.log('🔬 Diagnostic complet Final Fantasy - 312 vs 586 cartes')
+
+    const response = await axios.get('/api/scryfall/diagnostic-fin-complete')
+    console.log('🎯 Diagnostic FIN complet:', response.data)
+
+    if (response.data.success) {
+      const data = response.data.data
+      const maxCardsFound = data.maxCardsFound || 0
+      const bestQuery = data.bestQuery || 'Aucune'
+      const analysis = data.analysis || {}
+
+      let message = `Diagnostic FIN: ${maxCardsFound} cartes max trouvées`
+      let type = 'success'
+
+      if (maxCardsFound >= 586) {
+        message = `🎉 SOLUTION TROUVÉE! ${maxCardsFound} cartes disponibles avec la bonne requête!`
+        type = 'success'
+      } else if (maxCardsFound > 312) {
+        message = `📈 AMÉLIORATION: ${maxCardsFound} cartes vs 312 actuelles - Requête optimisée disponible!`
+        type = 'success'
+      } else {
+        message = `❌ LIMITATION: Maximum ${maxCardsFound} cartes disponibles sur Scryfall`
+        type = 'error'
+      }
+
+      showOperationStatus(type, message)
+
+      // Afficher les détails dans la console pour debug
+      console.log('📊 Analyse détaillée FIN:', {
+        objectif: 586,
+        maxTrouve: maxCardsFound,
+        meilleureRequete: bestQuery,
+        analyse: analysis,
+        recommandations: data.recommendations
+      })
+
+      // Si on a trouvé une meilleure solution, proposer de l'utiliser
+      if (maxCardsFound > 312) {
+        console.log('🚀 SOLUTION AMÉLIORÉE DISPONIBLE!')
+        console.log('📋 Recommandations:', data.recommendations)
+        console.log('🔗 Meilleure requête:', bestQuery)
+
+        // Optionnel: déclencher automatiquement la sync avec la meilleure méthode
+        if (maxCardsFound >= 500) {
+          setTimeout(() => {
+            console.log('🎯 Déclenchement automatique de la sync optimisée...')
+            syncFinalFantasyComplete()
+          }, 3000)
+        }
+      }
+
+    } else {
+      showOperationStatus('error', 'Erreur lors du diagnostic FIN')
+    }
+
+  } catch (error: any) {
+    console.error('❌ Erreur diagnostic FIN complet:', error)
+    showOperationStatus('error', 'Erreur diagnostic FIN complet')
+  } finally {
+    debuggingFin.value = false
+  }
+}
+
+
+
 // Lifecycle
 onMounted(() => {
   console.log('🎛️ SetSelector monté avec fonctionnalités avancées')
@@ -1046,5 +1158,68 @@ onMounted(() => {
   .filter-select {
     min-width: auto;
   }
+}
+/* Nouveau style pour les boutons debug FIN */
+.debug-fin-button {
+  flex: 1;
+  min-width: 70px;
+  padding: 0.5rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.7rem;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  background: linear-gradient(45deg, #ff6b9d, #c44569);
+  color: white;
+  border: 1px solid #ff3838;
+}
+
+.debug-fin-button:hover:not(:disabled) {
+  background: linear-gradient(45deg, #c44569, #8e2638);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(255, 56, 56, 0.3);
+}
+
+.debug-fin-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.diagnostic-fin-button {
+  flex: 1;
+  min-width: 80px;
+  padding: 0.5rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.7rem;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  background: linear-gradient(45deg, #ff4757, #ff3742);
+  color: white;
+  border: 2px solid #ff6b9d;
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+  box-shadow: 0 2px 8px rgba(255, 71, 87, 0.3);
+}
+
+.diagnostic-fin-button:hover:not(:disabled) {
+  background: linear-gradient(45deg, #ff3742, #ff2f3a);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(255, 71, 87, 0.4);
+  border-color: #ff4757;
+}
+
+.diagnostic-fin-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>
