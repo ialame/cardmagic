@@ -3,8 +3,7 @@ package com.pcagrad.magic.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pcagrad.magic.dto.ApiResponse;
-import com.pcagrad.magic.entity.CardEntity;
-import com.pcagrad.magic.entity.SetEntity;
+import com.pcagrad.magic.entity.MagicSet;
 import com.pcagrad.magic.model.MtgCard;
 import com.pcagrad.magic.service.ScryfallService;
 import com.pcagrad.magic.service.CardPersistenceService;
@@ -448,13 +447,13 @@ public class ScryfallController {
      */
     private void updateSetEntity(String setCode, String setName, int cardsCount) {
         try {
-            Optional<SetEntity> setOpt = setRepository.findByCode(setCode);
-            SetEntity setEntity;
+            Optional<MagicSet> setOpt = setRepository.findByCode(setCode);
+            MagicSet setEntity;
 
             if (setOpt.isPresent()) {
                 setEntity = setOpt.get();
             } else {
-                setEntity = new SetEntity();
+                setEntity = new MagicSet();
                 setEntity.setCode(setCode);
                 setEntity.setType("expansion");
             }

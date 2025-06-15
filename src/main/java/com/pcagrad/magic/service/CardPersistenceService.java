@@ -1,7 +1,7 @@
 package com.pcagrad.magic.service;
 
-import com.pcagrad.magic.entity.CardEntity;
-import com.pcagrad.magic.entity.SetEntity;
+import com.pcagrad.magic.entity.MagicCard;
+import com.pcagrad.magic.entity.MagicSet;
 import com.pcagrad.magic.model.MtgCard;
 import com.pcagrad.magic.model.MtgSet;
 import com.pcagrad.magic.repository.CardRepository;
@@ -41,11 +41,11 @@ public class CardPersistenceService {
     /**
      * Sauvegarde ou met à jour une extension en base
      */
-    public SetEntity saveOrUpdateSet(MtgSet mtgSet) {
+    public MagicSet saveOrUpdateSet(MtgSet mtgSet) {
         logger.debug("💾 Sauvegarde de l'extension : {} ({})", mtgSet.name(), mtgSet.code());
 
-        Optional<SetEntity> existingSet = setRepository.findByCode(mtgSet.code());
-        SetEntity setEntity;
+        Optional<MagicSet> existingSet = setRepository.findByCode(mtgSet.code());
+        MagicSet setEntity;
 
         if (existingSet.isPresent()) {
             setEntity = existingSet.get();
@@ -76,7 +76,7 @@ public class CardPersistenceService {
 
             for (MtgCard mtgCard : cards) {
                 try {
-                    CardEntity result = saveOrUpdateCardWithUUID(mtgCard, setCode);
+                    MagicCard result = saveOrUpdateCardWithUUID(mtgCard, setCode);
                     if (result != null) {
                         if (result.getCreatedAt().equals(result.getUpdatedAt())) {
                             savedCount++;
@@ -112,12 +112,12 @@ public class CardPersistenceService {
      * NOUVELLE MÉTHODE: S'assurer que l'extension existe avant de sauvegarder les cartes
      */
     private void ensureSetExists(String setCode, List<MtgCard> cards) {
-        Optional<SetEntity> existingSet = setRepository.findByCode(setCode);
+        Optional<MagicSet> existingSet = setRepository.findByCode(setCode);
 
         if (existingSet.isEmpty()) {
             logger.info("🔧 Extension {} non trouvée en base, création automatique", setCode);
 
-            SetEntity newSet = new SetEntity();
+            MagicSet newSet = new MagicSet();
             newSet.setCode(setCode);
 
             // Essayer de déduire le nom depuis les cartes
@@ -149,15 +149,15 @@ public class CardPersistenceService {
 
     // Modifiez la méthode saveOrUpdateCardWithUUID dans CardPersistenceService.java
 
-    public CardEntity saveOrUpdateCardWithUUID(MtgCard mtgCard, String setCode) {
+    public MagicCard saveOrUpdateCardWithUUID(MtgCard mtgCard, String setCode) {
         if (mtgCard.id() == null || mtgCard.id().isEmpty()) {
             logger.warn("⚠️ Carte sans ID externe ignorée : {}", mtgCard.name());
             return null;
         }
 
         // CORRECTION: Chercher par externalId ET setCode pour éviter les doublons
-        Optional<CardEntity> existingCard = cardRepository.findByExternalIdAndSetCode(mtgCard.id(), setCode);
-        CardEntity cardEntity;
+        Optional<MagicCard> existingCard = cardRepository.findByExternalIdAndSetCode(mtgCard.id(), setCode);
+        MagicCard cardEntity;
 
         if (existingCard.isPresent()) {
             cardEntity = existingCard.get();
@@ -171,7 +171,7 @@ public class CardPersistenceService {
                     mtgCard.name(), cardEntity.getId());
         } else {
             // Vérifier s'il y a une carte avec le même nom dans le même set (doublon potentiel)
-            List<CardEntity> sameName = cardRepository.findByNameAndSetCode(mtgCard.name(), setCode);
+            List<MagicCard> sameName = cardRepository.findByNameAndSetCode(mtgCard.name(), setCode);
             if (!sameName.isEmpty()) {
                 // Utiliser la carte existante et mettre à jour son externalId
                 cardEntity = sameName.get(0);
@@ -191,7 +191,7 @@ public class CardPersistenceService {
             logger.error("❌ Erreur sauvegarde carte {} : {}", mtgCard.name(), e.getMessage());
             // En cas d'erreur UUID, essayer de créer une nouvelle carte
             try {
-                CardEntity newCard = createCardEntityWithUUID(mtgCard, setCode);
+                MagicCard newCard = createCardEntityWithUUID(mtgCard, setCode);
                 return cardRepository.save(newCard);
             } catch (Exception e2) {
                 logger.error("❌ Impossible de sauvegarder {} : {}", mtgCard.name(), e2.getMessage());
@@ -202,7 +202,7 @@ public class CardPersistenceService {
     /**
      * Méthode pour la compatibilité avec l'ancien code
      */
-    public CardEntity saveOrUpdateCard(MtgCard mtgCard, String setCode) {
+    public MagicCard saveOrUpdateCard(MtgCard mtgCard, String setCode) {
         return saveOrUpdateCardWithUUID(mtgCard, setCode);
     }
 
@@ -221,7 +221,7 @@ public class CardPersistenceService {
 
         for (MtgCard mtgCard : cards) {
             try {
-                CardEntity result = saveOrUpdateCardWithUUID(mtgCard, setCode);
+                MagicCard result = saveOrUpdateCardWithUUID(mtgCard, setCode);
                 if (result != null) {
                     if (result.getCreatedAt().equals(result.getUpdatedAt())) {
                         savedCount++;
@@ -259,15 +259,15 @@ public class CardPersistenceService {
     /**
      * Récupère les cartes depuis la base de données
      */
-    public List<CardEntity> getCardsFromDatabase(String setCode) {
+    public List<MagicCard> getCardsFromDatabase(String setCode) {
         return cardRepository.findBySetCodeOrderByNameAsc(setCode);
     }
 
     /**
      * Recherche de cartes avec filtres
      */
-    public Page<CardEntity> searchCards(String name, String setCode, String rarity,
-                                        String type, String artist, Pageable pageable) {
+    public Page<MagicCard> searchCards(String name, String setCode, String rarity,
+                                       String type, String artist, Pageable pageable) {
         return cardRepository.findCardsWithFilters(name, setCode, rarity, type, artist, pageable);
     }
 
@@ -276,7 +276,7 @@ public class CardPersistenceService {
      */
     public boolean isSetSynced(String setCode) {
         return setRepository.findByCode(setCode)
-                .map(SetEntity::getCardsSynced)
+                .map(MagicSet::getCardsSynced)
                 .orElse(false);
     }
 
@@ -309,8 +309,8 @@ public class CardPersistenceService {
     /**
      * Crée une nouvelle entité extension
      */
-    private SetEntity createSetEntity(MtgSet mtgSet) {
-        SetEntity setEntity = new SetEntity();
+    private MagicSet createSetEntity(MtgSet mtgSet) {
+        MagicSet setEntity = new MagicSet();
         setEntity.setCode(mtgSet.code());
         setEntity.setName(mtgSet.name());
         setEntity.setType(mtgSet.type());
@@ -335,7 +335,7 @@ public class CardPersistenceService {
     /**
      * Met à jour une entité extension existante
      */
-    private void updateSetEntity(SetEntity setEntity, MtgSet mtgSet) {
+    private void updateSetEntity(MagicSet setEntity, MtgSet mtgSet) {
         setEntity.setName(mtgSet.name());
         setEntity.setType(mtgSet.type());
         setEntity.setBlock(mtgSet.block());
@@ -356,8 +356,8 @@ public class CardPersistenceService {
     /**
      * NOUVELLE MÉTHODE - Crée une nouvelle entité carte avec UUID
      */
-    private CardEntity createCardEntityWithUUID(MtgCard mtgCard, String setCode) {
-        CardEntity cardEntity = new CardEntity();
+    private MagicCard createCardEntityWithUUID(MtgCard mtgCard, String setCode) {
+        MagicCard cardEntity = new MagicCard();
         cardEntity.setExternalId(mtgCard.id()); // Stocker l'ancien ID comme externalId
         updateCardEntity(cardEntity, mtgCard);
         cardEntity.setSetCode(setCode);
@@ -367,7 +367,7 @@ public class CardPersistenceService {
     /**
      * Met à jour une entité carte - VERSION UUID
      */
-    private void updateCardEntity(CardEntity cardEntity, MtgCard mtgCard) {
+    private void updateCardEntity(MagicCard cardEntity, MtgCard mtgCard) {
         cardEntity.setExternalId(mtgCard.id()); // Assurer que l'externalId est correct
         cardEntity.setName(mtgCard.name());
         cardEntity.setManaCost(mtgCard.manaCost());

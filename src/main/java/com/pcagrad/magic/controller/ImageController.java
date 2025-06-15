@@ -1,6 +1,6 @@
 package com.pcagrad.magic.controller;
 
-import com.pcagrad.magic.entity.CardEntity;
+import com.pcagrad.magic.entity.MagicCard;
 import com.pcagrad.magic.repository.CardRepository;
 import com.pcagrad.magic.service.ImageDownloadService;
 import org.slf4j.Logger;
@@ -41,13 +41,13 @@ public class ImageController {
     @GetMapping("/{cardId}")
     public ResponseEntity<Resource> getCardImage(@PathVariable UUID cardId) {
         try {
-            Optional<CardEntity> cardOpt = cardRepository.findById(cardId);
+            Optional<MagicCard> cardOpt = cardRepository.findById(cardId);
             if (cardOpt.isEmpty()) {
                 logger.warn("⚠️ Carte non trouvée : {}", cardId);
                 return ResponseEntity.notFound().build();
             }
 
-            CardEntity card = cardOpt.get();
+            MagicCard card = cardOpt.get();
 
             // Si l'image est téléchargée localement
             if (card.getImageDownloaded() != null && card.getImageDownloaded()
@@ -87,12 +87,12 @@ public class ImageController {
     @PostMapping("/{cardId}/download")
     public ResponseEntity<String> downloadCardImage(@PathVariable UUID cardId) {
         try {
-            Optional<CardEntity> cardOpt = cardRepository.findById(cardId);
+            Optional<MagicCard> cardOpt = cardRepository.findById(cardId);
             if (cardOpt.isEmpty()) {
                 return ResponseEntity.notFound().build();
             }
 
-            CardEntity card = cardOpt.get();
+            MagicCard card = cardOpt.get();
 
             if (card.getImageDownloaded() != null && card.getImageDownloaded()) {
                 return ResponseEntity.ok("Image déjà téléchargée");

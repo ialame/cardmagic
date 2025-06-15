@@ -1,14 +1,12 @@
 package com.pcagrad.magic.controller;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pcagrad.magic.entity.MagicSet;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import com.pcagrad.magic.dto.ApiResponse;
-import com.pcagrad.magic.entity.CardEntity;
-import com.pcagrad.magic.entity.SetEntity;
+import com.pcagrad.magic.entity.MagicCard;
 import com.pcagrad.magic.model.MtgCard;
 import com.pcagrad.magic.model.MtgSet;
 import com.pcagrad.magic.repository.CardRepository;
@@ -23,7 +21,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import java.util.Map;
 import java.util.HashMap;
@@ -75,9 +72,9 @@ public class MtgController {
             Map<String, Object> result = new HashMap<>();
 
             // 1. S'assurer que FIN existe
-            Optional<SetEntity> finSet = setRepository.findByCode("FIN");
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
             if (finSet.isEmpty()) {
-                SetEntity fin = new SetEntity();
+                MagicSet fin = new MagicSet();
                 fin.setCode("FIN");
                 fin.setName("Magic: The Gathering - FINAL FANTASY");
                 fin.setType("expansion");
@@ -159,9 +156,9 @@ public class MtgController {
             }
 
             // Test 3: État de FIN
-            Optional<SetEntity> finSet = setRepository.findByCode("FIN");
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
             if (finSet.isPresent()) {
-                SetEntity fin = finSet.get();
+                MagicSet fin = finSet.get();
                 long cardCount = cardRepository.countBySetCode("FIN");
 
                 Map<String, Object> finStatus = new HashMap<>();
@@ -179,7 +176,7 @@ public class MtgController {
             }
 
             // Test 4: Extensions récentes en base
-            List<SetEntity> recentSets = setRepository.findLatestSets();
+            List<MagicSet> recentSets = setRepository.findLatestSets();
             List<Map<String, Object>> recentInfo = recentSets.stream()
                     .limit(5)
                     .map(set -> {
@@ -267,7 +264,7 @@ public class MtgController {
             CompletableFuture.runAsync(() -> {
                 try {
                     // Supprimer les anciennes cartes FIN si elles existent
-                    List<CardEntity> existingCards = cardRepository.findBySetCodeOrderByNameAsc("FIN");
+                    List<MagicCard> existingCards = cardRepository.findBySetCodeOrderByNameAsc("FIN");
                     if (!existingCards.isEmpty()) {
                         cardRepository.deleteAll(existingCards);
                         logger.info("🗑️ {} anciennes cartes Final Fantasy supprimées", existingCards.size());
@@ -281,9 +278,9 @@ public class MtgController {
                         int savedCount = persistenceService.saveCards(finCards, "FIN");
 
                         // Mettre à jour l'extension
-                        Optional<SetEntity> finSet = setRepository.findByCode("FIN");
+                        Optional<MagicSet> finSet = setRepository.findByCode("FIN");
                         if (finSet.isPresent()) {
-                            SetEntity set = finSet.get();
+                            MagicSet set = finSet.get();
                             set.setCardsCount(savedCount);
                             set.setCardsSynced(true);
                             set.setLastSyncAt(LocalDateTime.now());
@@ -338,9 +335,9 @@ public class MtgController {
             }
 
             // Mettre à jour la date de sortie pour qu'elle soit récente
-            Optional<SetEntity> finSet = setRepository.findByCode("FIN");
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
             if (finSet.isPresent()) {
-                SetEntity set = finSet.get();
+                MagicSet set = finSet.get();
                 set.setReleaseDate(LocalDate.now()); // Date d'aujourd'hui
                 set.setCardsSynced(true);
                 setRepository.save(set);
@@ -370,9 +367,9 @@ public class MtgController {
         try {
             Map<String, Object> status = new HashMap<>();
 
-            Optional<SetEntity> finSet = setRepository.findByCode("FIN");
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
             if (finSet.isPresent()) {
-                SetEntity set = finSet.get();
+                MagicSet set = finSet.get();
                 long cardCount = cardRepository.countBySetCode("FIN");
 
                 status.put("exists", true);
@@ -383,7 +380,7 @@ public class MtgController {
                 status.put("lastSyncAt", set.getLastSyncAt());
 
                 // Vérifier les images
-                List<CardEntity> cards = cardRepository.findBySetCodeOrderByNameAsc("FIN");
+                List<MagicCard> cards = cardRepository.findBySetCodeOrderByNameAsc("FIN");
                 long imagesDownloaded = cards.stream()
                         .mapToLong(card -> (card.getImageDownloaded() != null && card.getImageDownloaded()) ? 1 : 0)
                         .sum();
@@ -544,7 +541,7 @@ public class MtgController {
             logger.info("🎮 Re-création de l'extension Final Fantasy");
 
             // Vérifier si FIN existe déjà
-            Optional<SetEntity> existingFin = setRepository.findByCode("FIN");
+            Optional<MagicSet> existingFin = setRepository.findByCode("FIN");
             if (existingFin.isPresent()) {
                 return ResponseEntity.ok(ApiResponse.success(
                         "Extension FIN existe déjà avec UUID: " + existingFin.get().getId(),
@@ -553,7 +550,7 @@ public class MtgController {
             }
 
             // Créer nouvelle extension FIN
-            SetEntity finSet = new SetEntity();
+            MagicSet finSet = new MagicSet();
             finSet.setCode("FIN");
             finSet.setName("Magic: The Gathering - FINAL FANTASY");
             finSet.setType("expansion");
@@ -561,7 +558,7 @@ public class MtgController {
             finSet.setCardsSynced(false);
             finSet.setCardsCount(0);
 
-            SetEntity savedFin = setRepository.save(finSet);
+            MagicSet savedFin = setRepository.save(finSet);
 
             logger.info("✅ Extension FIN recréée avec UUID : {}", savedFin.getId());
 
@@ -681,11 +678,11 @@ LIMIT 10;
 
             // Si c'est Final Fantasy et qu'elle n'existe pas, l'ajouter d'abord
             if ("FIN".equalsIgnoreCase(setCode)) {
-                Optional<SetEntity> existingSet = setRepository.findByCode("FIN");
+                Optional<MagicSet> existingSet = setRepository.findByCode("FIN");
                 if (existingSet.isEmpty()) {
                     logger.info("🎮 Extension Final Fantasy non trouvée, ajout en cours...");
 
-                    SetEntity finalFantasySet = new SetEntity();
+                    MagicSet finalFantasySet = new MagicSet();
                     finalFantasySet.setCode("FIN");
                     finalFantasySet.setName("Magic: The Gathering—FINAL FANTASY");
                     finalFantasySet.setType("expansion");
@@ -727,7 +724,7 @@ LIMIT 10;
     @GetMapping("/admin/sets/unsynced")
     public ResponseEntity<ApiResponse<List<Object>>> getUnsyncedSets() {
         try {
-            List<SetEntity> unsyncedSets = setRepository.findByCardsSyncedFalseOrderByReleaseDateDesc();
+            List<MagicSet> unsyncedSets = setRepository.findByCardsSyncedFalseOrderByReleaseDateDesc();
 
             // Convertir en format simple pour éviter les problèmes de sérialisation
             List<Object> result = unsyncedSets.stream()
@@ -760,7 +757,7 @@ LIMIT 10;
             logger.info("🎮 Ajout manuel de l'extension Final Fantasy");
 
             // Vérifier si elle existe déjà
-            Optional<SetEntity> existingSet = setRepository.findByCode("FIN");
+            Optional<MagicSet> existingSet = setRepository.findByCode("FIN");
             if (existingSet.isPresent()) {
                 return ResponseEntity.ok(ApiResponse.success(
                         "Extension Final Fantasy déjà présente avec le code : FIN",
@@ -768,8 +765,8 @@ LIMIT 10;
                 ));
             }
 
-            // Créer l'entité SetEntity pour Final Fantasy
-            SetEntity finalFantasySet = new SetEntity();
+            // Créer l'entité MagicSet pour Final Fantasy
+            MagicSet finalFantasySet = new MagicSet();
             finalFantasySet.setCode("FIN");
             finalFantasySet.setName("Magic: The Gathering—FINAL FANTASY");
             finalFantasySet.setType("expansion");
@@ -777,7 +774,7 @@ LIMIT 10;
             finalFantasySet.setCardsSynced(false);
 
             // Sauvegarder dans la base
-            SetEntity savedSet = setRepository.save(finalFantasySet);
+            MagicSet savedSet = setRepository.save(finalFantasySet);
 
             logger.info("✅ Extension Final Fantasy ajoutée : {}", savedSet.getCode());
 
@@ -815,7 +812,7 @@ LIMIT 10;
 
                 // Vérifier si elle existe déjà
                 if (setRepository.findByCode(code).isEmpty()) {
-                    SetEntity set = new SetEntity();
+                    MagicSet set = new MagicSet();
                     set.setCode(code);
                     set.setName((String) data[0]);
                     set.setType((String) data[1]);
@@ -847,12 +844,12 @@ LIMIT 10;
             logger.info("🔍 Récupération de l'extension {} avec cartes", setCode);
 
             // Chercher d'abord dans la base ET créer si nécessaire
-            Optional<SetEntity> setEntity = setRepository.findByCode(setCode);
+            Optional<MagicSet> setEntity = setRepository.findByCode(setCode);
 
             if (setEntity.isEmpty()) {
                 logger.info("🔧 Extension {} non trouvée, création automatique", setCode);
 
-                SetEntity newSet = new SetEntity();
+                MagicSet newSet = new MagicSet();
                 newSet.setCode(setCode);
                 newSet.setName(getSetNameFromCode(setCode));
                 newSet.setType("expansion");
@@ -865,10 +862,10 @@ LIMIT 10;
                 logger.info("✅ Extension {} créée automatiquement", setCode);
             }
 
-            SetEntity set = setEntity.get();
+            MagicSet set = setEntity.get();
 
             // Récupérer les cartes avec TOUTES les collections chargées
-            List<CardEntity> cards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+            List<MagicCard> cards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
 
             // CORRECTION: Construire la réponse manuellement pour éviter le lazy loading
             Map<String, Object> response = new HashMap<>();
@@ -910,9 +907,9 @@ LIMIT 10;
     }
 
     /**
-     * NOUVELLE MÉTHODE: Convertir une CardEntity en Map de façon sécurisée
+     * NOUVELLE MÉTHODE: Convertir une MagicCard en Map de façon sécurisée
      */
-    private Map<String, Object> convertCardToSafeMap(CardEntity card) {
+    private Map<String, Object> convertCardToSafeMap(MagicCard card) {
         Map<String, Object> cardMap = new HashMap<>();
 
         try {
@@ -1000,7 +997,7 @@ LIMIT 10;
     /**
      * NOUVELLE MÉTHODE HELPER: Définir les dates de sortie connues
      */
-    private void setKnownReleaseDate(SetEntity set, String setCode) {
+    private void setKnownReleaseDate(MagicSet set, String setCode) {
         Map<String, LocalDate> knownDates = Map.of(
                 "BLB", LocalDate.of(2024, 8, 2),
                 "MH3", LocalDate.of(2024, 6, 14),
@@ -1025,9 +1022,9 @@ LIMIT 10;
             logger.info("💾 Sauvegarde complète de l'extension : {}", setCode);
 
             // 1. S'assurer que l'extension existe
-            Optional<SetEntity> setEntity = setRepository.findByCode(setCode);
+            Optional<MagicSet> setEntity = setRepository.findByCode(setCode);
             if (setEntity.isEmpty()) {
-                SetEntity newSet = new SetEntity();
+                MagicSet newSet = new MagicSet();
                 newSet.setCode(setCode);
                 newSet.setName(getSetNameFromCode(setCode));
                 newSet.setType("expansion");
@@ -1067,12 +1064,12 @@ LIMIT 10;
     @GetMapping("/sets/{setCode}")
     public ResponseEntity<ApiResponse<Object>> getSet(@PathVariable String setCode) {
         try {
-            Optional<SetEntity> setEntity = setRepository.findByCode(setCode);
+            Optional<MagicSet> setEntity = setRepository.findByCode(setCode);
             if (setEntity.isEmpty()) {
                 return ResponseEntity.notFound().build();
             }
 
-            SetEntity set = setEntity.get();
+            MagicSet set = setEntity.get();
             long cardCount = cardRepository.countBySetCode(setCode);
 
             Map<String, Object> response = new HashMap<>();
@@ -1103,14 +1100,14 @@ LIMIT 10;
             setRepository.deleteByCode("FIN");
 
             // Recréer avec le bon encodage
-            SetEntity finalFantasySet = new SetEntity();
+            MagicSet finalFantasySet = new MagicSet();
             finalFantasySet.setCode("FIN");
             finalFantasySet.setName("Magic: The Gathering - FINAL FANTASY"); // Sans caractères spéciaux
             finalFantasySet.setType("expansion");
             finalFantasySet.setReleaseDate(LocalDate.of(2025, 6, 13));
             finalFantasySet.setCardsSynced(false);
 
-            SetEntity savedSet = setRepository.save(finalFantasySet);
+            MagicSet savedSet = setRepository.save(finalFantasySet);
 
             logger.info("✅ Extension Final Fantasy corrigée : {}", savedSet.getCode());
 
@@ -1134,7 +1131,7 @@ LIMIT 10;
     @GetMapping("/debug/all-sets")
     public ResponseEntity<ApiResponse<List<Object>>> debugAllSets() {
         try {
-            List<SetEntity> allSets = setRepository.findAll();
+            List<MagicSet> allSets = setRepository.findAll();
 
             List<Object> result = allSets.stream()
                     .map(set -> {
@@ -1178,7 +1175,7 @@ LIMIT 10;
                         debug.put("suggestion", "Vérifier la logique de détection");
 
                         // Ajouter des infos de debug
-                        List<SetEntity> recentSets = setRepository.findLatestSets();
+                        List<MagicSet> recentSets = setRepository.findLatestSets();
                         debug.put("setsInDb", recentSets.size());
                         debug.put("firstFiveSets", recentSets.stream()
                                 .limit(5)
@@ -1213,7 +1210,7 @@ LIMIT 10;
             logger.info("🔄 Rechargement forcé de l'extension : {}", setCode);
 
             // Supprimer les cartes existantes pour cette extension
-            List<CardEntity> existingCards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+            List<MagicCard> existingCards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
             if (!existingCards.isEmpty()) {
                 cardRepository.deleteAll(existingCards);
                 logger.info("🗑️ {} cartes supprimées pour {}", existingCards.size(), setCode);
@@ -1266,9 +1263,9 @@ LIMIT 10;
                 String code = entry.getKey();
                 Object[] data = entry.getValue();
 
-                Optional<SetEntity> existing = setRepository.findByCode(code);
+                Optional<MagicSet> existing = setRepository.findByCode(code);
                 if (existing.isEmpty()) {
-                    SetEntity set = new SetEntity();
+                    MagicSet set = new MagicSet();
                     set.setCode(code);
                     set.setName((String) data[0]);
                     set.setType((String) data[1]);
@@ -1280,7 +1277,7 @@ LIMIT 10;
                     logger.info("✅ Extension ajoutée : {} - {}", code, data[0]);
                 } else {
                     // Mettre à jour la date si nécessaire
-                    SetEntity existing_set = existing.get();
+                    MagicSet existing_set = existing.get();
                     existing_set.setReleaseDate((LocalDate) data[2]);
                     setRepository.save(existing_set);
                     logger.info("🔄 Extension mise à jour : {} - {}", code, data[0]);
@@ -1359,13 +1356,13 @@ LIMIT 10;
     @GetMapping("/admin/set-status/{setCode}")
     public ResponseEntity<ApiResponse<Object>> getSetStatus(@PathVariable String setCode) {
         try {
-            Optional<SetEntity> setEntity = setRepository.findByCode(setCode);
+            Optional<MagicSet> setEntity = setRepository.findByCode(setCode);
             if (setEntity.isEmpty()) {
                 return ResponseEntity.notFound().build();
             }
 
-            SetEntity set = setEntity.get();
-            List<CardEntity> cards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+            MagicSet set = setEntity.get();
+            List<MagicCard> cards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
 
             // Statistiques des images
             long totalCards = cards.size();
@@ -1410,7 +1407,7 @@ LIMIT 10;
             logger.info("⚡ Synchronisation temps réel pour : {}", setCode);
 
             // Nettoyer les anciennes données
-            List<CardEntity> existingCards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+            List<MagicCard> existingCards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
             if (!existingCards.isEmpty()) {
                 cardRepository.deleteAll(existingCards);
                 logger.info("🗑️ {} anciennes cartes supprimées", existingCards.size());
@@ -1449,7 +1446,7 @@ LIMIT 10;
     @GetMapping("/admin/all-sets-status")
     public ResponseEntity<ApiResponse<List<Object>>> getAllSetsStatus() {
         try {
-            List<SetEntity> allSets = setRepository.findAll();
+            List<MagicSet> allSets = setRepository.findAll();
 
             List<Object> result = allSets.stream()
                     .map(set -> {

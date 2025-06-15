@@ -2,7 +2,7 @@
 
 package com.pcagrad.magic.service;
 
-import com.pcagrad.magic.entity.SetEntity;
+import com.pcagrad.magic.entity.MagicSet;
 import com.pcagrad.magic.repository.CardRepository;
 import com.pcagrad.magic.repository.SetRepository;
 import org.slf4j.Logger;
@@ -91,9 +91,9 @@ public class ApplicationStartupService implements ApplicationRunner {
             String code = entry.getKey();
             SetData data = entry.getValue();
 
-            Optional<SetEntity> existing = setRepository.findByCode(code);
+            Optional<MagicSet> existing = setRepository.findByCode(code);
             if (existing.isEmpty()) {
-                SetEntity set = new SetEntity();
+                MagicSet set = new MagicSet();
                 set.setCode(code);
                 set.setName(data.name);
                 set.setType(data.type);
@@ -111,7 +111,7 @@ public class ApplicationStartupService implements ApplicationRunner {
                 }
             } else {
                 // Mettre à jour les informations si nécessaire
-                SetEntity existingSet = existing.get();
+                MagicSet existingSet = existing.get();
                 boolean updated = false;
 
                 if (!data.name.equals(existingSet.getName())) {
@@ -145,10 +145,10 @@ public class ApplicationStartupService implements ApplicationRunner {
         logger.info("🔍 Vérification de la cohérence des données...");
 
         // Vérifier FIN spécifiquement
-        Optional<SetEntity> finSet = setRepository.findByCode("FIN");
+        Optional<MagicSet> finSet = setRepository.findByCode("FIN");
         if (finSet.isPresent()) {
             long cardCount = cardRepository.countBySetCode("FIN");
-            SetEntity fin = finSet.get();
+            MagicSet fin = finSet.get();
 
             logger.info("🎮 Final Fantasy : {} cartes en base", cardCount);
 

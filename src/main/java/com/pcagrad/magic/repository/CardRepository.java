@@ -1,7 +1,7 @@
 // ========== CardRepository.java ==========
 package com.pcagrad.magic.repository;
 
-import com.pcagrad.magic.entity.CardEntity;
+import com.pcagrad.magic.entity.MagicCard;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -16,14 +16,14 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Repository
-public interface CardRepository extends JpaRepository<CardEntity, UUID> {
+public interface CardRepository extends JpaRepository<MagicCard, UUID> {
 
     // Méthodes de base par setCode
-    List<CardEntity> findBySetCode(String setCode);
-    List<CardEntity> findBySetCodeOrderByNameAsc(String setCode);
+    List<MagicCard> findBySetCode(String setCode);
+    List<MagicCard> findBySetCodeOrderByNameAsc(String setCode);
     long countBySetCode(String setCode);
 
-    @Query("SELECT DISTINCT c FROM CardEntity c " +
+    @Query("SELECT DISTINCT c FROM MagicCard c " +
             "LEFT JOIN FETCH c.colors " +
             "LEFT JOIN FETCH c.colorIdentity " +
             "LEFT JOIN FETCH c.types " +
@@ -31,24 +31,24 @@ public interface CardRepository extends JpaRepository<CardEntity, UUID> {
             "LEFT JOIN FETCH c.supertypes " +
             "WHERE c.setCode = :setCode " +
             "ORDER BY c.name ASC")
-    List<CardEntity> findBySetCodeWithCollections(@Param("setCode") String setCode);
+    List<MagicCard> findBySetCodeWithCollections(@Param("setCode") String setCode);
 
 
-    Page<CardEntity> findBySetCode(String setCode, Pageable pageable);
+    Page<MagicCard> findBySetCode(String setCode, Pageable pageable);
 
     // Recherche par ID externe (ancien ID string des APIs)
-    Optional<CardEntity> findByExternalId(String externalId);
-    Optional<CardEntity> findByExternalIdAndSetCode(String externalId, String setCode);
+    Optional<MagicCard> findByExternalId(String externalId);
+    Optional<MagicCard> findByExternalIdAndSetCode(String externalId, String setCode);
     boolean existsByExternalIdAndSetCode(String externalId, String setCode);
 
     // Recherche avec filtres
-    @Query("SELECT c FROM CardEntity c WHERE " +
+    @Query("SELECT c FROM MagicCard c WHERE " +
             "(:setCode IS NULL OR c.setCode = :setCode) AND " +
             "(:name IS NULL OR LOWER(c.name) LIKE LOWER(CONCAT('%', :name, '%'))) AND " +
             "(:type IS NULL OR LOWER(c.type) LIKE LOWER(CONCAT('%', :type, '%'))) AND " +
             "(:rarity IS NULL OR c.rarity = :rarity) AND " +
             "(:artist IS NULL OR LOWER(c.artist) LIKE LOWER(CONCAT('%', :artist, '%')))")
-    Page<CardEntity> findCardsWithFilters(
+    Page<MagicCard> findCardsWithFilters(
             @Param("setCode") String setCode,
             @Param("name") String name,
             @Param("type") String type,
@@ -58,13 +58,13 @@ public interface CardRepository extends JpaRepository<CardEntity, UUID> {
     );
 
     // Pour ImageDownloadService
-    List<CardEntity> findByImageDownloadedTrueAndLocalImagePathIsNotNull();
-    List<CardEntity> findByImageDownloadedFalseOrderByCreatedAtAsc();
+    List<MagicCard> findByImageDownloadedTrueAndLocalImagePathIsNotNull();
+    List<MagicCard> findByImageDownloadedFalseOrderByCreatedAtAsc();
 
     // Suppression par code d'extension
     @Modifying
     @Transactional
-    @Query("DELETE FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode)")
+    @Query("DELETE FROM MagicCard c WHERE UPPER(c.setCode) = UPPER(:setCode)")
     int deleteBySetCodeIgnoreCase(@Param("setCode") String setCode);
 
     @Modifying
@@ -81,23 +81,23 @@ public interface CardRepository extends JpaRepository<CardEntity, UUID> {
 
 
     // Méthodes utiles pour les statistiques
-    @Query("SELECT COUNT(c) FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode)")
+    @Query("SELECT COUNT(c) FROM MagicCard c WHERE UPPER(c.setCode) = UPPER(:setCode)")
     long countBySetCodeIgnoreCase(@Param("setCode") String setCode);
 
-    @Query("SELECT c FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode) ORDER BY c.name ASC")
-    List<CardEntity> findBySetCodeIgnoreCaseOrderByNameAsc(@Param("setCode") String setCode);
+    @Query("SELECT c FROM MagicCard c WHERE UPPER(c.setCode) = UPPER(:setCode) ORDER BY c.name ASC")
+    List<MagicCard> findBySetCodeIgnoreCaseOrderByNameAsc(@Param("setCode") String setCode);
 
-    @Query("SELECT COUNT(DISTINCT c.artist) FROM CardEntity c")
+    @Query("SELECT COUNT(DISTINCT c.artist) FROM MagicCard c")
     long countDistinctArtists();
 
-    @Query("SELECT c.rarity, COUNT(c) FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode) GROUP BY c.rarity")
+    @Query("SELECT c.rarity, COUNT(c) FROM MagicCard c WHERE UPPER(c.setCode) = UPPER(:setCode) GROUP BY c.rarity")
     List<Object[]> getRarityStatsForSet(@Param("setCode") String setCode);
 
     // Nouvelles méthodes pour la gestion des doublons avec UUID
-    @Query("SELECT c FROM CardEntity c WHERE c.externalId = :externalId AND c.setCode = :setCode")
-    List<CardEntity> findDuplicatesByExternalIdAndSetCode(@Param("externalId") String externalId, @Param("setCode") String setCode);
+    @Query("SELECT c FROM MagicCard c WHERE c.externalId = :externalId AND c.setCode = :setCode")
+    List<MagicCard> findDuplicatesByExternalIdAndSetCode(@Param("externalId") String externalId, @Param("setCode") String setCode);
 
-    List<CardEntity> findByNameAndSetCode(String name, String setCode);
+    List<MagicCard> findByNameAndSetCode(String name, String setCode);
 
 }
 

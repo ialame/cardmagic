@@ -1,6 +1,6 @@
 package com.pcagrad.magic.service;
 
-import com.pcagrad.magic.entity.CardEntity;
+import com.pcagrad.magic.entity.MagicCard;
 import com.pcagrad.magic.repository.CardRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,15 +13,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.MalformedURLException;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -74,7 +71,7 @@ public class ImageDownloadService {
      * Télécharge une image pour une carte donnée - VERSION CORRIGÉE
      */
     @Async
-    public CompletableFuture<Boolean> downloadCardImage(CardEntity card) {
+    public CompletableFuture<Boolean> downloadCardImage(MagicCard card) {
         if (!downloadEnabled) {
             logger.debug("🔒 Téléchargement d'images désactivé");
             return CompletableFuture.completedFuture(false);
@@ -136,8 +133,8 @@ public class ImageDownloadService {
     public CompletableFuture<Integer> downloadImagesForSet(String setCode) {
         logger.info("🎯 Début du téléchargement des images pour l'extension : {}", setCode);
 
-        List<CardEntity> cards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
-        List<CardEntity> cardsToDownload = cards.stream()
+        List<MagicCard> cards = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+        List<MagicCard> cardsToDownload = cards.stream()
                 .filter(card -> card.getImageDownloaded() == null || !card.getImageDownloaded())
                 .filter(card -> card.getOriginalImageUrl() != null && !card.getOriginalImageUrl().isEmpty())
                 .toList();
@@ -170,7 +167,7 @@ public class ImageDownloadService {
     /**
      * Télécharge une image depuis une URL - VERSION CORRIGÉE
      */
-    private Mono<Boolean> downloadImageFromUrl(String imageUrl, CardEntity card) {
+    private Mono<Boolean> downloadImageFromUrl(String imageUrl, MagicCard card) {
         return webClient.get()
                 .uri(imageUrl)
                 .retrieve()
@@ -209,7 +206,7 @@ public class ImageDownloadService {
     /**
      * Génère un nom de fichier unique pour une carte - VERSION SÉCURISÉE
      */
-    private String generateFileName(CardEntity card) {
+    private String generateFileName(MagicCard card) {
         String safeName = card.getName()
                 .replaceAll("[^a-zA-Z0-9\\s]", "") // Supprimer caractères spéciaux
                 .replaceAll("\\s+", "_") // Remplacer espaces par underscores

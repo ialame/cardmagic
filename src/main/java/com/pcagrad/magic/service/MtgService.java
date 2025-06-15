@@ -2,9 +2,8 @@ package com.pcagrad.magic.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pcagrad.magic.dto.ApiResponse;
-import com.pcagrad.magic.entity.CardEntity;
-import com.pcagrad.magic.entity.SetEntity;
+import com.pcagrad.magic.entity.MagicCard;
+import com.pcagrad.magic.entity.MagicSet;
 import com.pcagrad.magic.model.MtgCard;
 import com.pcagrad.magic.model.MtgSet;
 import com.pcagrad.magic.repository.CardRepository;
@@ -13,9 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
@@ -61,7 +58,7 @@ public class MtgService {
         logger.debug("🔍 Récupération de toutes les extensions");
 
         // D'abord essayer depuis la base de données
-        List<SetEntity> dbSets = setRepository.findAll();
+        List<MagicSet> dbSets = setRepository.findAll();
 
         if (!dbSets.isEmpty()) {
             logger.debug("✅ {} extensions trouvées en base de données", dbSets.size());
@@ -112,7 +109,7 @@ public class MtgService {
 
         return Mono.fromCallable(() -> {
             // 1. PRIORITÉ ABSOLUE : Final Fantasy s'il a des cartes
-            Optional<SetEntity> finSet = setRepository.findByCode("FIN");
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
             if (finSet.isPresent()) {
                 long finCardCount = cardRepository.countBySetCode("FIN");
                 if (finCardCount > 0) {
@@ -126,9 +123,9 @@ public class MtgService {
             }
 
             // 2. Chercher parmi les autres extensions récentes avec cartes
-            List<SetEntity> candidateSets = setRepository.findLatestSets();
+            List<MagicSet> candidateSets = setRepository.findLatestSets();
 
-            Optional<SetEntity> bestSet = candidateSets.stream()
+            Optional<MagicSet> bestSet = candidateSets.stream()
                     .filter(set -> set.getReleaseDate() != null)
                     .filter(set -> !isExcludedSetType(set.getType()))
                     .filter(set -> {
@@ -157,7 +154,7 @@ public class MtgService {
                     .findFirst();
 
             if (bestSet.isPresent()) {
-                SetEntity set = bestSet.get();
+                MagicSet set = bestSet.get();
                 long cardCount = cardRepository.countBySetCode(set.getCode());
                 logger.info("✅ Extension sélectionnée : {} ({}) - {} cartes",
                         set.getName(), set.getCode(), cardCount);
@@ -171,7 +168,7 @@ public class MtgService {
             }
 
             // 4. FALLBACK ULTIME : BLB ou première extension trouvée
-            Optional<SetEntity> fallback = candidateSets.stream()
+            Optional<MagicSet> fallback = candidateSets.stream()
                     .filter(set -> "BLB".equals(set.getCode()))
                     .findFirst();
 
@@ -209,7 +206,7 @@ public class MtgService {
 
                         // CORRECTION: Utiliser la méthode standard au lieu de WithCollections pour éviter les erreurs
                         return Mono.fromCallable(() -> {
-                            List<CardEntity> cardEntities = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+                            List<MagicCard> cardEntities = cardRepository.findBySetCodeOrderByNameAsc(setCode);
                             List<MtgCard> cards = cardEntities.stream()
                                     .map(this::entityToModel)
                                     .collect(Collectors.toList());
@@ -253,9 +250,9 @@ public class MtgService {
      * NOUVELLE MÉTHODE: Forcer FIN comme dernière extension
      */
     public void forceFinalFantasyAsLatest() {
-        Optional<SetEntity> finSet = setRepository.findByCode("FIN");
+        Optional<MagicSet> finSet = setRepository.findByCode("FIN");
         if (finSet.isPresent()) {
-            SetEntity fin = finSet.get();
+            MagicSet fin = finSet.get();
 
             // Mettre la date à aujourd'hui pour qu'elle soit "récente"
             fin.setReleaseDate(LocalDate.now());
@@ -275,12 +272,12 @@ public class MtgService {
      * NOUVELLE MÉTHODE: S'assurer que FIN existe en base avec les bonnes données
      */
     public void ensureFinalFantasyExists() {
-        Optional<SetEntity> finSet = setRepository.findByCode("FIN");
+        Optional<MagicSet> finSet = setRepository.findByCode("FIN");
 
         if (finSet.isEmpty()) {
             logger.info("🎮 Création automatique de l'extension Final Fantasy");
 
-            SetEntity finalFantasy = new SetEntity();
+            MagicSet finalFantasy = new MagicSet();
             finalFantasy.setCode("FIN");
             finalFantasy.setName("Magic: The Gathering - FINAL FANTASY");
             finalFantasy.setType("expansion");
@@ -345,7 +342,7 @@ public class MtgService {
         logger.debug("🔍 Récupération de l'extension : {}", setCode);
 
         // D'abord chercher en base
-        Optional<SetEntity> dbSet = setRepository.findByCode(setCode);
+        Optional<MagicSet> dbSet = setRepository.findByCode(setCode);
         if (dbSet.isPresent()) {
             logger.debug("✅ Extension {} trouvée en base", setCode);
             return Mono.just(entityToModel(dbSet.get()));
@@ -366,7 +363,7 @@ public class MtgService {
         logger.info("🔍 Récupération des cartes pour l'extension: {}", setCode);
 
         // Vérifier d'abord en base de données
-        List<CardEntity> cardsInDb = cardRepository.findBySetCodeOrderByNameAsc(setCode);
+        List<MagicCard> cardsInDb = cardRepository.findBySetCodeOrderByNameAsc(setCode);
         if (!cardsInDb.isEmpty()) {
             logger.info("✅ {} cartes trouvées en base pour {}", cardsInDb.size(), setCode);
             List<MtgCard> cards = cardsInDb.stream()
@@ -591,7 +588,7 @@ public class MtgService {
 
     // ========== CONVERSION ENTITY <-> MODEL ==========
 
-    private MtgSet entityToModel(SetEntity entity) {
+    private MtgSet entityToModel(MagicSet entity) {
         return new MtgSet(
                 entity.getCode(),
                 entity.getName(),
@@ -608,7 +605,7 @@ public class MtgService {
 
     // Dans MtgService.java - Méthode entityToModel mise à jour
 
-    private MtgCard entityToModel(CardEntity entity) {
+    private MtgCard entityToModel(MagicCard entity) {
         return new MtgCard(
                 entity.getExternalId(), // Utiliser externalId au lieu de id
                 entity.getName(),
