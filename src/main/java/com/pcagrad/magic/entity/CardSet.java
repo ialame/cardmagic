@@ -3,18 +3,21 @@ package com.pcagrad.magic.entity;
 import com.pcagrad.magic.util.Localization;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import org.hibernate.annotations.Cache;
 import org.hibernate.annotations.CacheConcurrencyStrategy;
 
 import java.util.*;
 
+@EqualsAndHashCode(callSuper = true)
 @Data
 @Entity
 @Table(name = "card_set")
 @Inheritance(strategy = InheritanceType.JOINED)
 @DiscriminatorColumn(name = "discriminator")
 @Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
-public class CardSet{
+@DiscriminatorValue("mag")
+public class CardSet  extends AbstractUuidEntity{
 	@Id
 	@GeneratedValue
 	@Column(name = "id", updatable = false, nullable = false)

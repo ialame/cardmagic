@@ -27,7 +27,11 @@ public interface SetRepository extends JpaRepository<MagicSet, UUID> {
     List<MagicSet> findByNameContainingIgnoreCaseOrderByReleaseDateDesc(@Param("name") String name);
 
     // Rechercher par bloc
-    List<MagicSet> findByBlockOrderByReleaseDateDesc(String block);
+    @Query("SELECT ms FROM MagicSet ms " +
+            "LEFT JOIN ms.translations t " +
+            "WHERE ms.block = :block " +
+            "ORDER BY (SELECT MAX(t2.releaseDate) FROM ms.translations t2) DESC")
+    List<MagicSet> findByBlockOrderByReleaseDateDesc(@Param("block") String block);
 
     // Extensions avec cartes synchronisées (basé sur nbCartes > 0)
     @Query("SELECT ms FROM MagicSet ms WHERE ms.nbCartes > 0 " +

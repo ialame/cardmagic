@@ -8,16 +8,12 @@ import lombok.Setter;
 
 import java.util.UUID;
 
+
 @Getter
 @Setter
 @Entity
 @Table(name = "magic_type")
-public class MagicType {
-    @Id
-    @GeneratedValue
-    @Column(name = "id", updatable = false, nullable = false)
-    private UUID id;
-
+public class MagicType  extends AbstractUuidEntity{
     @Column(name = "id_pca")
     private Integer idPca;
 

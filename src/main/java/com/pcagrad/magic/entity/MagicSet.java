@@ -4,14 +4,10 @@ import com.pcagrad.magic.util.Localization;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
 import org.hibernate.annotations.ColumnDefault;
 
 import java.time.LocalDateTime;
 
-@EqualsAndHashCode(callSuper = true)
-@Data
 @Entity
 @Table(name = "magic_set")
 public class MagicSet extends CardSet {
@@ -19,7 +15,6 @@ public class MagicSet extends CardSet {
     @Column(name = "id_pca")
     private Integer idPca;
 
-    // Le code reste unique et sert de clé métier
     @Size(max = 100)
     @Column(name = "code", length = 100)
     private String code;
@@ -90,44 +85,94 @@ public class MagicSet extends CardSet {
     @Column(name = "has_date_sortie_fr", nullable = false)
     private Boolean hasDateSortieFr = false;
 
-    // NOUVELLES MÉTHODES pour adapter l'ancienne logique
+    // CONSTRUCTEURS
+    public MagicSet() {
+        super();
+        ensureTranslationExists(Localization.USA);
+    }
 
-    /**
-     * Retourne le nom depuis les translations US par défaut
-     */
+    public MagicSet(String code, String name, String type) {
+        this();
+        this.code = code;
+        setName(name);
+    }
+
+    // GETTERS ET SETTERS EXPLICITES
+    public Integer getIdPca() { return idPca; }
+    public void setIdPca(Integer idPca) { this.idPca = idPca; }
+
+    public String getCode() { return code; }
+    public void setCode(String code) { this.code = code; }
+
+    public String getTcgplayerGroupId() { return tcgplayerGroupId; }
+    public void setTcgplayerGroupId(String tcgplayerGroupId) { this.tcgplayerGroupId = tcgplayerGroupId; }
+
+    public String getMtgoCode() { return mtgoCode; }
+    public void setMtgoCode(String mtgoCode) { this.mtgoCode = mtgoCode; }
+
+    public Integer getBaseSetSize() { return baseSetSize; }
+    public void setBaseSetSize(Integer baseSetSize) { this.baseSetSize = baseSetSize; }
+
+    public String getBoosterV3() { return boosterV3; }
+    public void setBoosterV3(String boosterV3) { this.boosterV3 = boosterV3; }
+
+    public String getVersion() { return version; }
+    public void setVersion(String version) { this.version = version; }
+
+    public String getBlock() { return block; }
+    public void setBlock(String block) { this.block = block; }
+
+    public String getTotalSetSize() { return totalSetSize; }
+    public void setTotalSetSize(String totalSetSize) { this.totalSetSize = totalSetSize; }
+
+    public Integer getNbCartes() { return nbCartes; }
+    public void setNbCartes(Integer nbCartes) { this.nbCartes = nbCartes; }
+
+    public Integer getNbImages() { return nbImages; }
+    public void setNbImages(Integer nbImages) { this.nbImages = nbImages; }
+
+    public String getNomDossier() { return nomDossier; }
+    public void setNomDossier(String nomDossier) { this.nomDossier = nomDossier; }
+
+    public String getNumSur() { return numSur; }
+    public void setNumSur(String numSur) { this.numSur = numSur; }
+
+    public MagicType getTypeMagic() { return typeMagic; }
+    public void setTypeMagic(MagicType typeMagic) { this.typeMagic = typeMagic; }
+
+    public Boolean getCertifiable() { return certifiable; }
+    public void setCertifiable(Boolean certifiable) { this.certifiable = certifiable; }
+
+    public Boolean getFr() { return fr; }
+    public void setFr(Boolean fr) { this.fr = fr; }
+
+    public Boolean getUs() { return us; }
+    public void setUs(Boolean us) { this.us = us; }
+
+    public Boolean getHasDateSortieFr() { return hasDateSortieFr; }
+    public void setHasDateSortieFr(Boolean hasDateSortieFr) { this.hasDateSortieFr = hasDateSortieFr; }
+
+    // MÉTHODES MÉTIER ADAPTÉES
     public String getName() {
         if (getTranslation(Localization.USA) != null) {
             return getTranslation(Localization.USA).getName();
         }
-        return "Extension " + code; // Fallback
+        return "Extension " + code;
     }
 
-    /**
-     * Définit le nom dans la translation US
-     */
     public void setName(String name) {
         ensureTranslationExists(Localization.USA);
         getTranslation(Localization.USA).setName(name);
     }
 
-    /**
-     * Retourne le type depuis typeMagic
-     */
     public String getType() {
         return typeMagic != null ? typeMagic.getType() : "expansion";
     }
 
-    /**
-     * Simule setType en trouvant/créant le MagicType approprié
-     */
     public void setType(String type) {
-        // Cette méthode devra être complétée avec un service pour chercher/créer MagicType
-        // Pour l'instant, on laisse vide car cela nécessite une injection de dépendance
+        // Cette méthode devra être complétée avec un service
     }
 
-    /**
-     * Retourne la date de release depuis la translation
-     */
     public java.time.LocalDate getReleaseDate() {
         if (getTranslation(Localization.USA) != null &&
                 getTranslation(Localization.USA).getReleaseDate() != null) {
@@ -136,9 +181,6 @@ public class MagicSet extends CardSet {
         return null;
     }
 
-    /**
-     * Définit la date de release dans la translation US
-     */
     public void setReleaseDate(java.time.LocalDate releaseDate) {
         ensureTranslationExists(Localization.USA);
         if (releaseDate != null) {
@@ -146,86 +188,8 @@ public class MagicSet extends CardSet {
         }
     }
 
-    /**
-     * Simule les propriétés de l'ancienne version
-     */
-    public Integer getCardsCount() {
-        return nbCartes;
-    }
-
-    public void setCardsCount(Integer count) {
-        this.nbCartes = count;
-    }
-
-    public Boolean getCardsSynced() {
-        // Logique métier : considérer comme synced si nbCartes > 0
-        return nbCartes != null && nbCartes > 0;
-    }
-
-    public void setCardsSynced(Boolean synced) {
-        // Ne peut pas être persisté directement, mais influence nbCartes
-        // La logique sera dans les services
-    }
-
-    public LocalDateTime getLastSyncAt() {
-        // Pas de champ équivalent dans la nouvelle structure
-        // Retourner la date de modification de la translation
-        if (getTranslation(Localization.USA) != null) {
-            return getTranslation(Localization.USA).getReleaseDate();
-        }
-        return null;
-    }
-
-    public void setLastSyncAt(LocalDateTime dateTime) {
-        // Simulé via la date de release pour l'instant
-        if (dateTime != null) {
-            setReleaseDate(dateTime.toLocalDate());
-        }
-    }
-
-    /**
-     * Propriétés manquantes simulées
-     */
-    public String getGathererCode() {
-        return mtgoCode; // Approximation
-    }
-
-    public void setGathererCode(String code) {
-        this.mtgoCode = code;
-    }
-
-    public String getMagicCardsInfoCode() {
-        return tcgplayerGroupId; // Approximation
-    }
-
-    public void setMagicCardsInfoCode(String code) {
-        this.tcgplayerGroupId = code;
-    }
-
-    public String getBorder() {
-        return version; // Approximation
-    }
-
-    public void setBorder(String border) {
-        this.version = border;
-    }
-
-    public Boolean getOnlineOnly() {
-        return !fr && !us; // Logique : si ni FR ni US, alors online only
-    }
-
-    public void setOnlineOnly(Boolean onlineOnly) {
-        if (onlineOnly != null && onlineOnly) {
-            this.fr = false;
-            this.us = false;
-        } else {
-            this.us = true; // Par défaut US
-        }
-    }
-
-    // MÉTHODES UTILITAIRES PRIVÉES
-
-    private void ensureTranslationExists(Localization localization) {
+    // MÉTHODES UTILITAIRES
+    public void ensureTranslationExists(Localization localization) {
         if (getTranslation(localization) == null) {
             CardSetTranslation translation = new CardSetTranslation();
             translation.setLocalization(localization);
@@ -234,18 +198,65 @@ public class MagicSet extends CardSet {
         }
     }
 
-    // CONSTRUCTEURS ADAPTÉS
+    // PROPRIÉTÉS DE COMPATIBILITÉ
+    public Integer getCardsCount() { return nbCartes; }
+    public void setCardsCount(Integer count) { this.nbCartes = count; }
 
-    public MagicSet() {
-        super();
-        // Initialiser une translation US par défaut
-        ensureTranslationExists(Localization.USA);
+    public Boolean getCardsSynced() { return nbCartes != null && nbCartes > 0; }
+    public void setCardsSynced(Boolean synced) { /* Ne peut pas être persisté directement */ }
+
+    public LocalDateTime getLastSyncAt() {
+        if (getTranslation(Localization.USA) != null) {
+            return getTranslation(Localization.USA).getReleaseDate();
+        }
+        return null;
     }
 
-    public MagicSet(String code, String name, String type) {
-        this();
-        this.code = code;
-        setName(name);
-        // setType nécessitera un service pour résoudre le MagicType
+    public void setLastSyncAt(LocalDateTime dateTime) {
+        if (dateTime != null) {
+            setReleaseDate(dateTime.toLocalDate());
+        }
+    }
+
+    public String getGathererCode() { return mtgoCode; }
+    public void setGathererCode(String code) { this.mtgoCode = code; }
+
+    public String getMagicCardsInfoCode() { return tcgplayerGroupId; }
+    public void setMagicCardsInfoCode(String code) { this.tcgplayerGroupId = code; }
+
+    public String getBorder() { return version; }
+    public void setBorder(String border) { this.version = border; }
+
+    public Boolean getOnlineOnly() { return !fr && !us; }
+    public void setOnlineOnly(Boolean onlineOnly) {
+        if (onlineOnly != null && onlineOnly) {
+            this.fr = false;
+            this.us = false;
+        } else {
+            this.us = true;
+        }
+    }
+
+    // EQUALS ET HASHCODE
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        MagicSet magicSet = (MagicSet) o;
+        return code != null ? code.equals(magicSet.code) : magicSet.code == null;
+    }
+
+    @Override
+    public int hashCode() {
+        return code != null ? code.hashCode() : 0;
+    }
+
+    @Override
+    public String toString() {
+        return "MagicSet{" +
+                "code='" + code + '\'' +
+                ", name='" + getName() + '\'' +
+                ", type='" + getType() + '\'' +
+                '}';
     }
 }

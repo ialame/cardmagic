@@ -8,6 +8,7 @@ import lombok.Setter;
 @Setter
 @Entity
 @Table(name = "magic_serie")
+@DiscriminatorValue("mag")
 public class MagicSerie extends Serie{
 
     @Column(name = "id_pca")

@@ -8,12 +8,9 @@ import java.util.*;
 @Data
 @Entity
 @Table(name = "card")
+@Inheritance(strategy = InheritanceType.JOINED)  // ← AJOUTÉ : Stratégie d'héritage JOINED
 @DiscriminatorColumn(name = "discriminator")
-public class Card {
-	@Id
-	@GeneratedValue
-	@Column(name = "id", updatable = false, nullable = false)
-	private UUID id;
+public class Card extends AbstractUuidEntity{
 
 	@OneToMany(fetch = FetchType.EAGER, mappedBy = "translatable", cascade = CascadeType.ALL)
 	@MapKey(name = "localization")
@@ -68,4 +65,13 @@ public class Card {
 		}
 	}
 
+	// MÉTHODE UTILITAIRE POUR LES SOUS-CLASSES
+	protected void ensureTranslationExists(Localization localization) {
+		if (getTranslation(localization) == null) {
+			CardTranslation translation = new CardTranslation();
+			translation.setLocalization(localization);
+			translation.setAvailable(true);
+			setTranslation(localization, translation);
+		}
+	}
 }

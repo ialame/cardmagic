@@ -3,6 +3,7 @@ package com.pcagrad.magic.entity;
 import com.pcagrad.magic.util.Localization;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import org.hibernate.annotations.Cache;
 import org.hibernate.annotations.CacheConcurrencyStrategy;
 
@@ -11,19 +12,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+@EqualsAndHashCode(callSuper = true)
 @Data
 @Entity
 @Table(name = "serie")
 @Inheritance(strategy = InheritanceType.JOINED)
 @DiscriminatorColumn(name = "discriminator")
-@DiscriminatorValue("bas")
+@DiscriminatorValue("mag")
 @Cacheable
 @Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
-public class Serie {
-	@Id
-	@GeneratedValue
-	@Column(name = "id", updatable = false, nullable = false)
-	private UUID id;
+public class Serie  extends AbstractUuidEntity{
 
 	@OneToMany(mappedBy = "translatable", fetch = FetchType.EAGER, cascade = CascadeType.ALL)
 	@MapKey(name = "localization")

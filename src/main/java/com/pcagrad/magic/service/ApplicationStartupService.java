@@ -1,10 +1,16 @@
-// NOUVEAU SERVICE: ApplicationStartupService.java
+// Modification dans ApplicationStartupService.java
 
 package com.pcagrad.magic.service;
 
+import com.pcagrad.magic.entity.MagicSerie;
 import com.pcagrad.magic.entity.MagicSet;
+import com.pcagrad.magic.entity.Serie;
+import com.pcagrad.magic.entity.SerieTranslation;
 import com.pcagrad.magic.repository.CardRepository;
+import com.pcagrad.magic.repository.MagicSerieRepository;
 import com.pcagrad.magic.repository.SetRepository;
+import com.pcagrad.magic.repository.SerieRepository; // Ajoutez ce repository
+import com.pcagrad.magic.util.Localization;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,17 +18,14 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * Service qui s'exécute au démarrage de l'application
- * pour initialiser les données nécessaires
- */
 @Service
-@Order(1) // S'exécute en premier
+@Order(1)
 public class ApplicationStartupService implements ApplicationRunner {
 
     private static final Logger logger = LoggerFactory.getLogger(ApplicationStartupService.class);
@@ -33,32 +36,95 @@ public class ApplicationStartupService implements ApplicationRunner {
     @Autowired
     private CardRepository cardRepository;
 
+    @Autowired
+    private SerieRepository serieRepository; // Ajoutez cette injection
+
+    @Autowired
+    private EntityAdaptationService adaptationService; // Ajoutez cette injection
+
+    @Autowired
+    private MagicSerieRepository magicSerieRepository;
+
     @Override
     public void run(ApplicationArguments args) throws Exception {
         logger.info("🚀 Initialisation de l'application MTG Cards...");
 
-        // 1. Créer les extensions essentielles
-        initializeEssentialSets();
+        // 1. Créer la série par défaut 2025
+        Serie defaultSerie = getOrCreateSerie2025();
 
-        // 2. Vérifier la cohérence des données
+        // 2. Créer les extensions essentielles
+        initializeEssentialSets(defaultSerie);
+
+        // 3. Vérifier la cohérence des données
         checkDataConsistency();
 
         logger.info("✅ Initialisation terminée");
     }
 
     /**
-     * Initialise les extensions essentielles qui doivent toujours exister
+     * Crée ou récupère la série par défaut "2025"
      */
-    private void initializeEssentialSets() {
-        logger.info("📦 Initialisation des extensions essentielles...");
+    @Transactional
+    protected Serie getOrCreateSerie2025() {
+        logger.info("📁 Recherche/création de la série Magic 2025...");
 
-        // Extensions 2024-2025 prioritaires avec leurs vraies informations
+        try {
+            // Chercher une MagicSerie existante avec le nom "2025"
+            Optional<MagicSerie> existingSerie = magicSerieRepository.findByName("2025");
+
+            if (existingSerie.isPresent()) {
+                logger.info("✅ Série Magic 2025 trouvée : {}", existingSerie.get().getId());
+                return existingSerie.get();
+            }
+        } catch (Exception e) {
+            logger.warn("⚠️ Erreur lors de la recherche de série existante : {}", e.getMessage());
+        }
+
+        // Créer une nouvelle MagicSerie
+        MagicSerie serie2025 = new MagicSerie();  // ← Utiliser MagicSerie au lieu de Serie
+
+        // Créer la traduction US
+        SerieTranslation translationUS = new SerieTranslation();
+        translationUS.setName("2025");
+        translationUS.setLocalization(Localization.USA);
+        translationUS.setActive(true);
+
+        // Créer la traduction FR
+        SerieTranslation translationFR = new SerieTranslation();
+        translationFR.setName("Année 2025");
+        translationFR.setLocalization(Localization.FRANCE);
+        translationFR.setActive(true);
+
+        // Assigner les traductions
+        serie2025.setTranslation(Localization.USA, translationUS);
+        serie2025.setTranslation(Localization.FRANCE, translationFR);
+
+        try {
+            // Sauvegarder avec le repository approprié
+            MagicSerie savedSerie = magicSerieRepository.save(serie2025);
+            logger.info("🎉 Série Magic 2025 créée avec succès : {}", savedSerie.getId());
+            return savedSerie;
+        } catch (Exception e) {
+            logger.error("❌ Erreur lors de la création de la série Magic 2025 : {}", e.getMessage());
+            return null;
+        }
+    }
+
+
+    /**
+     * Initialise les extensions essentielles avec la série par défaut
+     */
+    @Transactional
+    protected void initializeEssentialSets(Serie defaultSerie) {
+        logger.info("📦 Initialisation des extensions essentielles avec série 2025...");
+
+        // Extensions 2024-2025 prioritaires
         Map<String, SetData> essentialSets = Map.of(
                 "FIN", new SetData(
                         "Magic: The Gathering - FINAL FANTASY",
                         "expansion",
                         LocalDate.of(2025, 6, 13),
-                        true // Priorité maximale
+                        true
                 ),
                 "BLB", new SetData(
                         "Bloomburrow",
@@ -96,82 +162,56 @@ public class ApplicationStartupService implements ApplicationRunner {
                 MagicSet set = new MagicSet();
                 set.setCode(code);
                 set.setName(data.name);
-                set.setType(data.type);
                 set.setReleaseDate(data.releaseDate);
-                set.setCardsSynced(false);
                 set.setCardsCount(0);
+
+                // *** SOLUTION : Assigner la série par défaut ***
+                set.setSerie(defaultSerie);
+
+                // Utiliser les services d'adaptation pour le type Magic
+                adaptationService.setMagicSetType(set, data.type);
+                adaptationService.prepareMagicSetForSave(set, data.type);
 
                 setRepository.save(set);
                 createdCount++;
 
                 if (data.isPriority) {
-                    logger.info("🌟 Extension prioritaire créée : {} - {}", code, data.name);
+                    logger.info("🌟 Extension prioritaire créée : {} - {} (Série: 2025)", code, data.name);
                 } else {
-                    logger.info("📦 Extension créée : {} - {}", code, data.name);
+                    logger.info("📦 Extension créée : {} - {} (Série: 2025)", code, data.name);
                 }
             } else {
-                // Mettre à jour les informations si nécessaire
+                // Mettre à jour la série si elle n'est pas définie
                 MagicSet existingSet = existing.get();
-                boolean updated = false;
-
-                if (!data.name.equals(existingSet.getName())) {
-                    existingSet.setName(data.name);
-                    updated = true;
-                }
-
-                if (existingSet.getReleaseDate() == null || !data.releaseDate.equals(existingSet.getReleaseDate())) {
-                    existingSet.setReleaseDate(data.releaseDate);
-                    updated = true;
-                }
-
-                if (updated) {
+                if (existingSet.getSerie() == null) {
+                    existingSet.setSerie(defaultSerie);
                     setRepository.save(existingSet);
-                    logger.info("🔄 Extension mise à jour : {} - {}", code, data.name);
+                    logger.info("📁 Série 2025 assignée à l'extension existante : {}", code);
                 }
             }
         }
 
         if (createdCount > 0) {
-            logger.info("✅ {} extensions essentielles créées", createdCount);
+            logger.info("✅ {} extensions créées avec la série 2025", createdCount);
         } else {
-            logger.info("✅ Toutes les extensions essentielles existent déjà");
+            logger.info("ℹ️ Toutes les extensions essentielles existent déjà");
         }
     }
 
     /**
-     * Vérifie la cohérence des données
+     * Vérification basique de la cohérence des données
      */
     private void checkDataConsistency() {
         logger.info("🔍 Vérification de la cohérence des données...");
 
-        // Vérifier FIN spécifiquement
-        Optional<MagicSet> finSet = setRepository.findByCode("FIN");
-        if (finSet.isPresent()) {
-            long cardCount = cardRepository.countBySetCode("FIN");
-            MagicSet fin = finSet.get();
-
-            logger.info("🎮 Final Fantasy : {} cartes en base", cardCount);
-
-            // Mettre à jour le compteur de cartes
-            if (fin.getCardsCount() == null || fin.getCardsCount() != cardCount) {
-                fin.setCardsCount((int) cardCount);
-                fin.setCardsSynced(cardCount > 0);
-                setRepository.save(fin);
-                logger.info("🔄 Compteur de cartes FIN mis à jour : {}", cardCount);
-            }
-
-            if (cardCount == 0) {
-                logger.warn("⚠️ Final Fantasy n'a pas de cartes. Utilisez /admin/sync-final-fantasy pour les synchroniser");
-            }
-        }
-
-        // Statistiques générales
         long totalSets = setRepository.count();
         long totalCards = cardRepository.count();
-        long syncedSets = setRepository.countSyncedSets();
 
-        logger.info("📊 Base de données : {} extensions, {} cartes, {} extensions synchronisées",
-                totalSets, totalCards, syncedSets);
+        logger.info("📊 Statistiques : {} extensions, {} cartes", totalSets, totalCards);
+
+        if (totalSets == 0) {
+            logger.warn("⚠️ Aucune extension en base - c'est peut-être normal si c'est la première fois");
+        }
     }
 
     /**

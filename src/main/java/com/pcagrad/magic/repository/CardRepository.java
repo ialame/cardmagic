@@ -44,7 +44,8 @@ public interface CardRepository extends JpaRepository<MagicCard, UUID> {
             @Param("externalId") String externalId,
             @Param("setCode") String setCode);
 
-    boolean existsByIdPrimAndZPostExtension(String idPrim, String zPostExtension);
+    @Query("SELECT COUNT(mc) > 0 FROM MagicCard mc WHERE mc.idPrim = :idPrim AND mc.zPostExtension = :zPostExtension")
+    boolean existsByIdPrimAndZPostExtension(@Param("idPrim") String idPrim, @Param("zPostExtension") String zPostExtension);
 
     // Recherche avec filtres adaptée
     @Query("SELECT mc FROM MagicCard mc " +
@@ -77,7 +78,8 @@ public interface CardRepository extends JpaRepository<MagicCard, UUID> {
 
     @Modifying
     @Transactional
-    int deleteByZPostExtension(String zPostExtension);
+    @Query("DELETE FROM MagicCard mc WHERE mc.zPostExtension = :zPostExtension")
+    int deleteByZPostExtension(@Param("zPostExtension") String zPostExtension);
 
     @Modifying
     @Transactional
@@ -99,14 +101,15 @@ public interface CardRepository extends JpaRepository<MagicCard, UUID> {
             "WHERE mc.attributes LIKE '%\"artist\":%'")
     long countDistinctArtists();
 
-    @Query("SELECT " +
+    @Query(value = "SELECT " +
             "SUBSTRING(mc.attributes, LOCATE('\"rarity\":\"', mc.attributes) + 10, " +
             "LOCATE('\"', mc.attributes, LOCATE('\"rarity\":\"', mc.attributes) + 10) - LOCATE('\"rarity\":\"', mc.attributes) - 10) as rarity, " +
-            "COUNT(mc) " +
-            "FROM MagicCard mc " +
-            "WHERE UPPER(mc.zPostExtension) = UPPER(:setCode) " +
+            "COUNT(mc.id) " +
+            "FROM magic_card mc " +
+            "WHERE UPPER(mc.z_post_extension) = UPPER(:setCode) " +
             "AND mc.attributes LIKE '%\"rarity\":%' " +
-            "GROUP BY rarity")
+            "GROUP BY rarity",
+            nativeQuery = true)
     List<Object[]> getRarityStatsForSet(@Param("setCode") String setCode);
 
     // Gestion des doublons
