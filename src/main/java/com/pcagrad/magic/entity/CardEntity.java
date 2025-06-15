@@ -11,7 +11,7 @@ import java.util.UUID;
         @Index(name = "idx_card_set", columnList = "setCode"),
         @Index(name = "idx_card_rarity", columnList = "rarity"),
         @Index(name = "idx_card_type", columnList = "type"),
-        @Index(name = "idx_card_external_id", columnList = "externalId") // Nouvel index pour l'ID externe
+        @Index(name = "idx_card_external_id", columnList = "externalId")
 })
 public class CardEntity {
 
@@ -32,33 +32,36 @@ public class CardEntity {
 
     private Integer cmc;
 
-    @ElementCollection
+
+    // CORRECTION: Utiliser FetchType.EAGER pour les collections
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "card_colors", joinColumns = @JoinColumn(name = "card_id"))
     @Column(name = "color")
     private List<String> colors;
 
-    @ElementCollection
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "card_color_identity", joinColumns = @JoinColumn(name = "card_id"))
     @Column(name = "color")
     private List<String> colorIdentity;
 
-    @Column(nullable = false, length = 500)
-    private String type;
-
-    @ElementCollection
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "card_supertypes", joinColumns = @JoinColumn(name = "card_id"))
     @Column(name = "supertype")
     private List<String> supertypes;
 
-    @ElementCollection
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "card_types", joinColumns = @JoinColumn(name = "card_id"))
     @Column(name = "type_name")
     private List<String> types;
 
-    @ElementCollection
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "card_subtypes", joinColumns = @JoinColumn(name = "card_id"))
     @Column(name = "subtype")
     private List<String> subtypes;
+
+    @Column(nullable = false, length = 500)
+    private String type;
+
 
     @Column(nullable = false)
     private String rarity;

@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import reactor.core.publisher.Mono;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -543,4 +545,180 @@ public class ScryfallService {
      * Record pour les informations d'extension
      */
     public record SetInfo(boolean exists, String name, int expectedCardCount, String releaseDate) {}
+
+    /**
+     * VERSION CORRIGÉE pour Final Fantasy - Les vraies requêtes qui fonctionnent
+     */
+    public List<MtgCard> fetchAllCardsFromSetFixed(String setCode) {
+        if (!"FIN".equalsIgnoreCase(setCode)) {
+            return getAllCardsWithPaginationFixed(setCode.toLowerCase());
+        }
+
+        logger.info("🎮 RÉCUPÉRATION CORRIGÉE Final Fantasy - Objectif 312 cartes");
+
+        // LES VRAIES REQUÊTES QUI FONCTIONNENT POUR FIN
+        String[] workingQueries = {
+                "set:fin",                                    // Requête de base
+                "\"final fantasy\" set:fin",                  // Avec nom complet
+                "e:fin",                                      // Extension alternative
+                "set=\"Magic: The Gathering—FINAL FANTASY\"", // Nom exact de l'extension
+                "(set:fin OR e:fin)",                         // Combinaison
+                "game:paper set:fin",                         // Avec format papier
+                "is:booster set:fin"                          // Cartes en booster
+        };
+
+        List<MtgCard> bestResult = new ArrayList<>();
+        String bestQuery = "";
+        int maxFound = 0;
+
+        for (String query : workingQueries) {
+            try {
+                logger.info("🔍 Test requête FIN: '{}'", query);
+
+                List<MtgCard> result = fetchCardsWithPaginationForQuery(query);
+
+                logger.info("📊 Requête '{}' : {} cartes trouvées", query, result.size());
+
+                if (result.size() > maxFound) {
+                    maxFound = result.size();
+                    bestQuery = query;
+                    bestResult = new ArrayList<>(result);
+                }
+
+                // Si on trouve 300+ cartes, c'est probablement le bon résultat
+                if (result.size() >= 300) {
+                    logger.info("🎯 OBJECTIF ATTEINT avec '{}' : {} cartes ≥ 300", query, result.size());
+                    break;
+                }
+
+                Thread.sleep(300); // Respecter les limites de l'API
+
+            } catch (Exception e) {
+                logger.error("❌ Erreur requête '{}' : {}", query, e.getMessage());
+            }
+        }
+
+        if (maxFound >= 300) {
+            logger.info("🎉 SUCCESS Final Fantasy : {} cartes avec requête '{}'", maxFound, bestQuery);
+        } else {
+            logger.warn("⚠️ Seulement {} cartes trouvées - Problème potentiel", maxFound);
+        }
+
+        return bestResult;
+    }
+
+    /**
+     * NOUVELLE MÉTHODE: Pagination complète pour une requête spécifique
+     */
+    private List<MtgCard> fetchCardsWithPaginationForQuery(String query) throws Exception {
+        List<MtgCard> allCards = new ArrayList<>();
+        int page = 1;
+        int maxPages = 25; // Plus de pages pour FIN
+
+        while (page <= maxPages) {
+            String url = String.format(
+                    "https://api.scryfall.com/cards/search?q=%s&format=json&order=set&page=%d",
+                    URLEncoder.encode(query, StandardCharsets.UTF_8), page
+            );
+
+            logger.debug("📄 Page {}/{} - URL: {}", page, maxPages, url);
+
+            String response = restTemplate.getForObject(url, String.class);
+            if (response == null) {
+                logger.warn("⚠️ Réponse nulle page {} pour query '{}'", page, query);
+                break;
+            }
+
+            JsonNode root = objectMapper.readTree(response);
+
+            // Vérifier erreur API
+            if (root.has("type") && "error".equals(root.get("type").asText())) {
+                String errorCode = root.has("code") ? root.get("code").asText() : "unknown";
+
+                if ("not_found".equals(errorCode) && !allCards.isEmpty()) {
+                    logger.info("🏁 Fin normale pagination pour '{}' - {} cartes", query, allCards.size());
+                    break;
+                } else {
+                    String errorMessage = root.has("details") ? root.get("details").asText() : "Erreur API";
+                    throw new Exception("Erreur Scryfall: " + errorMessage);
+                }
+            }
+
+            // Parser les cartes
+            JsonNode dataNode = root.get("data");
+            if (dataNode != null && dataNode.isArray()) {
+                int cardsInPage = dataNode.size();
+
+                for (JsonNode cardNode : dataNode) {
+                    try {
+                        MtgCard card = parseScryfallCard(cardNode);
+
+                        // FILTRAGE IMPORTANT: S'assurer que c'est bien FIN
+                        if (isValidFinCard(card)) {
+                            allCards.add(card);
+                        } else {
+                            logger.debug("⚠️ Carte '{}' filtrée (pas FIN)", card.name());
+                        }
+                    } catch (Exception e) {
+                        logger.warn("⚠️ Erreur parsing carte page {} : {}", page, e.getMessage());
+                    }
+                }
+
+                logger.info("✅ Page {} : {} cartes ajoutées (Total: {})", page, cardsInPage, allCards.size());
+
+                // Vérifier continuation
+                boolean hasMore = root.has("has_more") && root.get("has_more").asBoolean();
+                if (!hasMore) {
+                    logger.info("🏁 Fin pagination normale page {} pour '{}'", page, query);
+                    break;
+                }
+            } else {
+                logger.warn("⚠️ Pas de données page {} pour '{}'", page, query);
+                break;
+            }
+
+            page++;
+            Thread.sleep(150); // Respecter les limites
+        }
+
+        logger.info("📋 Pagination terminée pour '{}': {} cartes sur {} pages", query, allCards.size(), page - 1);
+        return allCards;
+    }
+
+    /**
+     * FILTRAGE: Vérifier qu'une carte appartient bien à Final Fantasy
+     */
+    private boolean isValidFinCard(MtgCard card) {
+        if (card == null) return false;
+
+        // Vérifier le code d'extension
+        if ("FIN".equalsIgnoreCase(card.set())) {
+            return true;
+        }
+
+        // Vérifier le nom de l'extension
+        if (card.setName() != null && card.setName().toLowerCase().contains("final fantasy")) {
+            return true;
+        }
+
+        // Vérifier des mots-clés Final Fantasy dans le nom
+        String name = card.name().toLowerCase();
+        String text = card.text() != null ? card.text().toLowerCase() : "";
+
+        String[] ffKeywords = {
+                "cloud", "sephiroth", "terra", "lightning", "tifa", "aerith",
+                "chocobo", "moogle", "bahamut", "shiva", "ifrit", "ramuh",
+                "garland", "warrior of light", "cecil", "kain", "rydia"
+        };
+
+        for (String keyword : ffKeywords) {
+            if (name.contains(keyword) || text.contains(keyword)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+
 }

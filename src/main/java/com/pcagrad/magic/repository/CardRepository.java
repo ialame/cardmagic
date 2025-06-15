@@ -22,6 +22,18 @@ public interface CardRepository extends JpaRepository<CardEntity, UUID> {
     List<CardEntity> findBySetCode(String setCode);
     List<CardEntity> findBySetCodeOrderByNameAsc(String setCode);
     long countBySetCode(String setCode);
+
+    @Query("SELECT DISTINCT c FROM CardEntity c " +
+            "LEFT JOIN FETCH c.colors " +
+            "LEFT JOIN FETCH c.colorIdentity " +
+            "LEFT JOIN FETCH c.types " +
+            "LEFT JOIN FETCH c.subtypes " +
+            "LEFT JOIN FETCH c.supertypes " +
+            "WHERE c.setCode = :setCode " +
+            "ORDER BY c.name ASC")
+    List<CardEntity> findBySetCodeWithCollections(@Param("setCode") String setCode);
+
+
     Page<CardEntity> findBySetCode(String setCode, Pageable pageable);
 
     // Recherche par ID externe (ancien ID string des APIs)
@@ -58,6 +70,15 @@ public interface CardRepository extends JpaRepository<CardEntity, UUID> {
     @Modifying
     @Transactional
     int deleteBySetCode(String setCode);
+
+
+    @Modifying
+    @Transactional
+    default void deleteBySetCodeAndFlush(String setCode) {
+        deleteBySetCodeIgnoreCase(setCode);
+        flush();
+    }
+
 
     // Méthodes utiles pour les statistiques
     @Query("SELECT COUNT(c) FROM CardEntity c WHERE UPPER(c.setCode) = UPPER(:setCode)")

@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -59,13 +60,16 @@ public class CardPersistenceService {
     }
 
     /**
-     * Sauvegarde les cartes d'une extension en base - VERSION UUID
+     * Sauvegarde les cartes d'une extension en base - VERSION CORRIGÉE avec création automatique de l'extension
      */
     @Async
     public CompletableFuture<Integer> saveCardsForSet(String setCode, List<MtgCard> cards) {
         logger.info("💾 Début de la sauvegarde de {} cartes pour l'extension {}", cards.size(), setCode);
 
         return CompletableFuture.supplyAsync(() -> {
+            // CORRECTION 1: Créer ou vérifier l'extension AVANT de sauvegarder les cartes
+            ensureSetExists(setCode, cards);
+
             int savedCount = 0;
             int updatedCount = 0;
             int skippedCount = 0;
@@ -103,6 +107,45 @@ public class CardPersistenceService {
             return savedCount + updatedCount;
         });
     }
+
+    /**
+     * NOUVELLE MÉTHODE: S'assurer que l'extension existe avant de sauvegarder les cartes
+     */
+    private void ensureSetExists(String setCode, List<MtgCard> cards) {
+        Optional<SetEntity> existingSet = setRepository.findByCode(setCode);
+
+        if (existingSet.isEmpty()) {
+            logger.info("🔧 Extension {} non trouvée en base, création automatique", setCode);
+
+            SetEntity newSet = new SetEntity();
+            newSet.setCode(setCode);
+
+            // Essayer de déduire le nom depuis les cartes
+            String setName = cards.stream()
+                    .map(MtgCard::setName)
+                    .filter(Objects::nonNull)
+                    .findFirst()
+                    .orElse(setCode + " (Auto-generated)");
+
+            newSet.setName(setName);
+            newSet.setType("expansion"); // Type par défaut
+            newSet.setCardsSynced(false);
+            newSet.setCardsCount(0);
+
+            // Dates connues pour certaines extensions
+            if ("BLB".equals(setCode)) {
+                newSet.setReleaseDate(LocalDate.of(2024, 8, 2));
+            } else if ("MH3".equals(setCode)) {
+                newSet.setReleaseDate(LocalDate.of(2024, 6, 14));
+            } else if ("OTJ".equals(setCode)) {
+                newSet.setReleaseDate(LocalDate.of(2024, 4, 19));
+            }
+
+            setRepository.save(newSet);
+            logger.info("✅ Extension {} créée automatiquement : {}", setCode, setName);
+        }
+    }
+
 
     // Modifiez la méthode saveOrUpdateCardWithUUID dans CardPersistenceService.java
 
@@ -164,10 +207,13 @@ public class CardPersistenceService {
     }
 
     /**
-     * Méthode pour sauvegarder une liste de cartes (utilisée par ScryfallController)
+     * Méthode pour la compatibilité avec l'ancien code - VERSION CORRIGÉE
      */
     public int saveCards(List<MtgCard> cards, String setCode) {
         logger.info("💾 Début de la sauvegarde de {} cartes pour l'extension {}", cards.size(), setCode);
+
+        // CORRECTION: Créer l'extension si elle n'existe pas
+        ensureSetExists(setCode, cards);
 
         int savedCount = 0;
         int updatedCount = 0;

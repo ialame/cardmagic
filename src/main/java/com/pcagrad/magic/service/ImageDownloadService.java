@@ -71,7 +71,7 @@ public class ImageDownloadService {
     }
 
     /**
-     * Télécharge une image pour une carte donnée
+     * Télécharge une image pour une carte donnée - VERSION CORRIGÉE
      */
     @Async
     public CompletableFuture<Boolean> downloadCardImage(CardEntity card) {
@@ -97,14 +97,21 @@ public class ImageDownloadService {
             return downloadImageFromUrl(card.getOriginalImageUrl(), card)
                     .toFuture()
                     .thenApply(success -> {
-                        if (success) {
+                        // CORRECTION: Vérifier si success n'est pas null
+                        if (success != null && success) {
                             card.setImageDownloaded(true);
-                            cardRepository.save(card);
-                            logger.info("✅ Image téléchargée avec succès : {}", card.getName());
+                            try {
+                                cardRepository.save(card);
+                                logger.info("✅ Image téléchargée avec succès : {}", card.getName());
+                                return true;
+                            } catch (Exception e) {
+                                logger.error("❌ Erreur sauvegarde après téléchargement {} : {}", card.getName(), e.getMessage());
+                                return false;
+                            }
                         } else {
                             logger.warn("❌ Échec du téléchargement pour : {}", card.getName());
+                            return false;
                         }
-                        return success;
                     })
                     .whenComplete((result, throwable) -> {
                         downloadSemaphore.release();
@@ -120,6 +127,7 @@ public class ImageDownloadService {
             return CompletableFuture.completedFuture(false);
         }
     }
+
 
     /**
      * Télécharge les images pour toutes les cartes d'une extension
@@ -160,7 +168,7 @@ public class ImageDownloadService {
     }
 
     /**
-     * Télécharge une image depuis une URL
+     * Télécharge une image depuis une URL - VERSION CORRIGÉE
      */
     private Mono<Boolean> downloadImageFromUrl(String imageUrl, CardEntity card) {
         return webClient.get()
@@ -170,6 +178,11 @@ public class ImageDownloadService {
                 .timeout(Duration.ofSeconds(30))
                 .map(imageBytes -> {
                     try {
+                        if (imageBytes == null || imageBytes.length == 0) {
+                            logger.warn("⚠️ Image vide reçue pour {}", card.getName());
+                            return false;
+                        }
+
                         String fileName = generateFileName(card);
                         Path filePath = saveImageToFile(imageBytes, fileName);
 
@@ -180,32 +193,56 @@ public class ImageDownloadService {
                         logger.error("❌ Erreur lors de la sauvegarde de l'image pour {} : {}",
                                 card.getName(), e.getMessage());
                         return false;
+                    } catch (Exception e) {
+                        logger.error("❌ Erreur générale téléchargement image pour {} : {}",
+                                card.getName(), e.getMessage());
+                        return false;
                     }
                 })
-                .onErrorReturn(false);
+                .onErrorReturn(false) // Syntaxe correcte pour Reactor
+                .doOnError(throwable -> {
+                    logger.error("❌ Erreur HTTP téléchargement image pour {} : {}",
+                            card.getName(), throwable.getMessage());
+                });
     }
 
     /**
-     * Génère un nom de fichier unique pour une carte
+     * Génère un nom de fichier unique pour une carte - VERSION SÉCURISÉE
      */
     private String generateFileName(CardEntity card) {
-        String safeName = card.getName().replaceAll("[^a-zA-Z0-9\\s]", "").replaceAll("\\s+", "_");
+        String safeName = card.getName()
+                .replaceAll("[^a-zA-Z0-9\\s]", "") // Supprimer caractères spéciaux
+                .replaceAll("\\s+", "_") // Remplacer espaces par underscores
+                .toLowerCase();
+
+        // Limiter la longueur du nom
+        if (safeName.length() > 50) {
+            safeName = safeName.substring(0, 50);
+        }
+
         String extension = ".jpg";
 
-        // Format: SETCODE_CARDNUMBER_SAFENAME.jpg
+        // Format: SETCODE_CARDNUMBER_SAFENAME.jpg ou SETCODE_UUID_SAFENAME.jpg
         if (card.getNumber() != null && !card.getNumber().isEmpty()) {
+            String safeNumber = card.getNumber().replaceAll("[^a-zA-Z0-9]", "");
             return String.format("%s_%s_%s%s",
-                    card.getSetCode(), card.getNumber(), safeName, extension);
+                    card.getSetCode(), safeNumber, safeName, extension);
         } else {
+            // Utiliser les 8 premiers caractères de l'UUID si pas de numéro
+            String shortId = card.getId().toString().substring(0, 8);
             return String.format("%s_%s_%s%s",
-                    card.getSetCode(), card.getId(), safeName, extension);
+                    card.getSetCode(), shortId, safeName, extension);
         }
     }
 
     /**
-     * Sauvegarde les bytes d'image dans un fichier
+     * Sauvegarde les bytes d'image dans un fichier - VERSION SÉCURISÉE
      */
     private Path saveImageToFile(byte[] imageBytes, String fileName) throws IOException {
+        if (imageBytes == null || imageBytes.length == 0) {
+            throw new IOException("Données d'image vides");
+        }
+
         Path setDirectory = Paths.get(storageBasePath);
         Files.createDirectories(setDirectory);
 
@@ -213,6 +250,12 @@ public class ImageDownloadService {
 
         try (FileOutputStream fos = new FileOutputStream(filePath.toFile())) {
             fos.write(imageBytes);
+            fos.flush();
+        }
+
+        // Vérifier que le fichier a été créé
+        if (!Files.exists(filePath) || Files.size(filePath) == 0) {
+            throw new IOException("Échec de création du fichier image");
         }
 
         return filePath;

@@ -118,19 +118,28 @@ public class ScryfallController {
         }
     }
 
-    /**
-     * MÉTHODE MISE À JOUR - Synchronisation AVANCÉE Final Fantasy avec pagination forcée
-     */
     @PostMapping("/sync-final-fantasy-advanced")
     public ResponseEntity<ApiResponse<Object>> syncFinalFantasyAdvanced() {
         try {
             logger.info("🎮 Synchronisation AVANCÉE Final Fantasy avec pagination forcée");
 
-            // Supprimer les anciennes cartes FIN
-            int deletedCount = cardRepository.deleteBySetCodeIgnoreCase("FIN");
-            logger.info("🗑️ {} anciennes cartes Final Fantasy supprimées", deletedCount);
-
             Map<String, Object> result = new HashMap<>();
+
+            // CORRECTION: Supprimer COMPLÈTEMENT les anciennes cartes pour éviter les conflits UUID
+            try {
+                int deletedCount = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+                logger.info("🗑️ {} anciennes cartes Final Fantasy SUPPRIMÉES", deletedCount);
+                result.put("deletedCards", deletedCount);
+
+                // Forcer le flush pour s'assurer que la suppression est effective
+                cardRepository.flush();
+
+            } catch (Exception e) {
+                logger.error("❌ Erreur suppression anciennes cartes : {}", e.getMessage());
+            }
+
+            // Attendre un peu que la suppression soit effective
+            Thread.sleep(1000);
 
             // NOUVELLE APPROCHE : Utiliser directement la méthode corrigée du service
             List<MtgCard> allFinCards = scryfallService.fetchAllCardsFromSet("FIN");
@@ -140,7 +149,7 @@ public class ScryfallController {
 
                 result.put("cartesSauvegardées", savedCount);
                 result.put("cartesTotales", allFinCards.size());
-                result.put("objectifAtteint", savedCount >= 580); // Objectif réaliste
+                result.put("objectifAtteint", savedCount >= 300); // Objectif réaliste
 
                 // Statistiques par rareté
                 Map<String, Long> rarityStats = allFinCards.stream()
@@ -460,6 +469,152 @@ public class ScryfallController {
 
         } catch (Exception e) {
             logger.error("❌ Erreur mise à jour extension {} : {}", setCode, e.getMessage());
+        }
+    }
+
+    @GetMapping("/test-fin-queries")
+    public ResponseEntity<ApiResponse<Object>> testFinQueries() {
+        Map<String, Object> results = new HashMap<>();
+
+        String[] testQueries = {
+                "final fantasy",
+                "\"final fantasy\"",
+                "game:paper final fantasy",
+                "chocobo OR moogle OR cloud OR sephiroth",
+                "\"Square Enix\""
+        };
+
+        for (String query : testQueries) {
+            try {
+                int count = countCardsWithQuery(query);
+                results.put(query, count);
+            } catch (Exception e) {
+                results.put(query, "ERROR: " + e.getMessage());
+            }
+        }
+
+        return ResponseEntity.ok(ApiResponse.success(results, "Test des requêtes FIN"));
+    }
+
+
+    /**
+     * ENDPOINT CORRIGÉ: Synchronisation Final Fantasy avec méthode fixée
+     */
+    @PostMapping("/sync-final-fantasy-fixed")
+    public ResponseEntity<ApiResponse<Object>> syncFinalFantasyFixed() {
+        try {
+            logger.info("🎮 Synchronisation Final Fantasy CORRIGÉE - Objectif 312 cartes");
+
+            Map<String, Object> result = new HashMap<>();
+
+            // Supprimer les anciennes cartes (les 6 incorrectes)
+            int deletedCount = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            logger.info("🗑️ {} anciennes cartes supprimées", deletedCount);
+            result.put("deletedCards", deletedCount);
+
+            cardRepository.flush();
+            Thread.sleep(1000);
+
+            // Utiliser la méthode corrigée
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSetFixed("FIN");
+
+            if (!finCards.isEmpty()) {
+                int savedCount = cardPersistenceService.saveCards(finCards, "FIN");
+
+                result.put("cartesTotales", finCards.size());
+                result.put("cartesSauvegardées", savedCount);
+                result.put("objectif312Atteint", savedCount >= 312);
+
+                // Statistiques par rareté
+                Map<String, Long> rarityStats = finCards.stream()
+                        .collect(Collectors.groupingBy(
+                                card -> card.rarity() != null ? card.rarity() : "Unknown",
+                                Collectors.counting()
+                        ));
+                result.put("répartitionRareté", rarityStats);
+
+                // Mettre à jour l'extension
+                updateSetEntity("FIN", "Magic: The Gathering - FINAL FANTASY", savedCount);
+
+                logger.info("🎉 SUCCESS: {} cartes Final Fantasy récupérées et sauvegardées", savedCount);
+
+                // Démarrer téléchargement images
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        imageDownloadService.downloadImagesForSet("FIN");
+                    } catch (Exception e) {
+                        logger.error("❌ Erreur téléchargement images: {}", e.getMessage());
+                    }
+                });
+
+                String message = String.format("Final Fantasy synchronisé avec succès: %d cartes récupérées", savedCount);
+                return ResponseEntity.ok(ApiResponse.success(result, message));
+
+            } else {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte Final Fantasy trouvée avec les requêtes corrigées"));
+            }
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sync FIN corrigée: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur sync corrigée: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * ENDPOINT DE DEBUG: Tester toutes les requêtes possibles
+     */
+    @GetMapping("/debug-fin-queries-all")
+    public ResponseEntity<ApiResponse<Object>> debugFinQueriesAll() {
+        try {
+            Map<String, Object> results = new HashMap<>();
+
+            String[] testQueries = {
+                    "set:fin",
+                    "e:fin",
+                    "\"final fantasy\"",
+                    "set=\"Magic: The Gathering—FINAL FANTASY\"",
+                    "(set:fin OR e:fin)",
+                    "game:paper set:fin",
+                    "is:booster set:fin",
+                    "legal:legacy set:fin"
+            };
+
+            for (String query : testQueries) {
+                try {
+                    // Test simple count d'abord
+                    int count = countCardsWithQuery(query);
+                    results.put(query + "_count", count);
+
+                    if (count > 0) {
+                        // Si on trouve des cartes, tester une page
+                        String url = String.format(
+                                "https://api.scryfall.com/cards/search?q=%s&format=json&page=1",
+                                URLEncoder.encode(query, StandardCharsets.UTF_8)
+                        );
+
+                        String response = restTemplate.getForObject(url, String.class);
+                        if (response != null) {
+                            JsonNode root = objectMapper.readTree(response);
+                            if (root.has("total_cards")) {
+                                results.put(query + "_total", root.get("total_cards").asInt());
+                            }
+                        }
+                    }
+
+                    Thread.sleep(200);
+
+                } catch (Exception e) {
+                    results.put(query + "_error", e.getMessage());
+                }
+            }
+
+            return ResponseEntity.ok(ApiResponse.success(results, "Debug toutes les requêtes FIN"));
+
+        } catch (Exception e) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Erreur debug: " + e.getMessage()));
         }
     }
 }
