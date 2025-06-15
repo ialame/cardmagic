@@ -6,6 +6,7 @@ import com.pcagrad.magic.model.MtgCard;
 import com.pcagrad.magic.model.MtgSet;
 import com.pcagrad.magic.repository.CardRepository;
 import com.pcagrad.magic.repository.SetRepository;
+import com.pcagrad.magic.util.Localization;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,21 +39,24 @@ public class CardPersistenceService {
     @Autowired
     private ImageDownloadService imageDownloadService;
 
+    @Autowired
+    private EntityAdaptationService adaptationService;
+
     /**
-     * Sauvegarde ou met à jour une extension en base
+     * Sauvegarde ou met à jour une extension en base - VERSION ADAPTÉE
      */
     public MagicSet saveOrUpdateSet(MtgSet mtgSet) {
-        logger.debug("💾 Sauvegarde de l'extension : {} ({})", mtgSet.name(), mtgSet.code());
+        logger.debug("💾 Sauvegarde de l'extension adaptée : {} ({})", mtgSet.name(), mtgSet.code());
 
         Optional<MagicSet> existingSet = setRepository.findByCode(mtgSet.code());
         MagicSet setEntity;
 
         if (existingSet.isPresent()) {
             setEntity = existingSet.get();
-            updateSetEntity(setEntity, mtgSet);
+            updateSetEntityAdapted(setEntity, mtgSet);
             logger.debug("🔄 Mise à jour de l'extension existante : {}", mtgSet.code());
         } else {
-            setEntity = createSetEntity(mtgSet);
+            setEntity = createSetEntityAdapted(mtgSet);
             logger.info("✨ Nouvelle extension créée : {} - {}", mtgSet.code(), mtgSet.name());
         }
 
@@ -60,15 +64,15 @@ public class CardPersistenceService {
     }
 
     /**
-     * Sauvegarde les cartes d'une extension en base - VERSION CORRIGÉE avec création automatique de l'extension
+     * Sauvegarde les cartes d'une extension en base - VERSION ADAPTÉE
      */
     @Async
     public CompletableFuture<Integer> saveCardsForSet(String setCode, List<MtgCard> cards) {
-        logger.info("💾 Début de la sauvegarde de {} cartes pour l'extension {}", cards.size(), setCode);
+        logger.info("💾 Début de la sauvegarde adaptée de {} cartes pour l'extension {}", cards.size(), setCode);
 
         return CompletableFuture.supplyAsync(() -> {
-            // CORRECTION 1: Créer ou vérifier l'extension AVANT de sauvegarder les cartes
-            ensureSetExists(setCode, cards);
+            // S'assurer que l'extension existe
+            ensureSetExistsAdapted(setCode, cards);
 
             int savedCount = 0;
             int updatedCount = 0;
@@ -76,13 +80,10 @@ public class CardPersistenceService {
 
             for (MtgCard mtgCard : cards) {
                 try {
-                    MagicCard result = saveOrUpdateCardWithUUID(mtgCard, setCode);
+                    MagicCard result = saveOrUpdateCardAdapted(mtgCard, setCode);
                     if (result != null) {
-                        if (result.getCreatedAt().equals(result.getUpdatedAt())) {
-                            savedCount++;
-                        } else {
-                            updatedCount++;
-                        }
+                        // Les dates created/updated ne sont plus disponibles, on compte tout comme sauvé
+                        savedCount++;
 
                         // Déclencher le téléchargement de l'image en arrière-plan
                         if (result.getOriginalImageUrl() != null && !result.getOriginalImageUrl().isEmpty()) {
@@ -99,28 +100,28 @@ public class CardPersistenceService {
             }
 
             // Mettre à jour les statistiques de l'extension
-            updateSetStatistics(setCode);
+            updateSetStatisticsAdapted(setCode);
 
-            logger.info("✅ Sauvegarde terminée pour {} : {} nouvelles, {} mises à jour, {} ignorées",
-                    setCode, savedCount, updatedCount, skippedCount);
+            logger.info("✅ Sauvegarde terminée pour {} : {} sauvées, {} ignorées",
+                    setCode, savedCount, skippedCount);
 
-            return savedCount + updatedCount;
+            return savedCount;
         });
     }
 
     /**
-     * NOUVELLE MÉTHODE: S'assurer que l'extension existe avant de sauvegarder les cartes
+     * S'assurer que l'extension existe - VERSION ADAPTÉE
      */
-    private void ensureSetExists(String setCode, List<MtgCard> cards) {
+    private void ensureSetExistsAdapted(String setCode, List<MtgCard> cards) {
         Optional<MagicSet> existingSet = setRepository.findByCode(setCode);
 
         if (existingSet.isEmpty()) {
-            logger.info("🔧 Extension {} non trouvée en base, création automatique", setCode);
+            logger.info("🔧 Extension {} non trouvée en base, création automatique adaptée", setCode);
 
             MagicSet newSet = new MagicSet();
             newSet.setCode(setCode);
 
-            // Essayer de déduire le nom depuis les cartes
+            // Déduire le nom depuis les cartes
             String setName = cards.stream()
                     .map(MtgCard::setName)
                     .filter(Objects::nonNull)
@@ -128,108 +129,254 @@ public class CardPersistenceService {
                     .orElse(setCode + " (Auto-generated)");
 
             newSet.setName(setName);
-            newSet.setType("expansion"); // Type par défaut
-            newSet.setCardsSynced(false);
-            newSet.setCardsCount(0);
+
+            // Utiliser le service d'adaptation pour définir le type
+            adaptationService.setMagicSetType(newSet, "expansion");
+            adaptationService.prepareMagicSetForSave(newSet, "expansion");
 
             // Dates connues pour certaines extensions
-            if ("BLB".equals(setCode)) {
-                newSet.setReleaseDate(LocalDate.of(2024, 8, 2));
-            } else if ("MH3".equals(setCode)) {
-                newSet.setReleaseDate(LocalDate.of(2024, 6, 14));
-            } else if ("OTJ".equals(setCode)) {
-                newSet.setReleaseDate(LocalDate.of(2024, 4, 19));
-            }
+            setKnownReleaseDateAdapted(newSet, setCode);
 
             setRepository.save(newSet);
-            logger.info("✅ Extension {} créée automatiquement : {}", setCode, setName);
+            logger.info("✅ Extension {} créée automatiquement avec adaptation", setCode);
         }
     }
 
-
-    // Modifiez la méthode saveOrUpdateCardWithUUID dans CardPersistenceService.java
-
-    public MagicCard saveOrUpdateCardWithUUID(MtgCard mtgCard, String setCode) {
+    /**
+     * Sauvegarde ou met à jour une carte - VERSION ADAPTÉE
+     */
+    public MagicCard saveOrUpdateCardAdapted(MtgCard mtgCard, String setCode) {
         if (mtgCard.id() == null || mtgCard.id().isEmpty()) {
             logger.warn("⚠️ Carte sans ID externe ignorée : {}", mtgCard.name());
             return null;
         }
 
-        // CORRECTION: Chercher par externalId ET setCode pour éviter les doublons
+        // Chercher par idPrim (externalId) ET setCode
         Optional<MagicCard> existingCard = cardRepository.findByExternalIdAndSetCode(mtgCard.id(), setCode);
         MagicCard cardEntity;
 
         if (existingCard.isPresent()) {
             cardEntity = existingCard.get();
-
-            // IMPORTANT: Ne pas changer l'UUID, juste mettre à jour les autres champs
-            UUID originalId = cardEntity.getId();
-            updateCardEntity(cardEntity, mtgCard);
-            cardEntity.setId(originalId); // Forcer le même UUID
-
-            logger.debug("🔄 Mise à jour carte existante : {} (UUID préservé: {})",
-                    mtgCard.name(), cardEntity.getId());
+            updateCardEntityAdapted(cardEntity, mtgCard);
+            logger.debug("🔄 Mise à jour carte existante adaptée : {}", mtgCard.name());
         } else {
-            // Vérifier s'il y a une carte avec le même nom dans le même set (doublon potentiel)
+            // Vérifier s'il y a une carte avec le même nom
             List<MagicCard> sameName = cardRepository.findByNameAndSetCode(mtgCard.name(), setCode);
             if (!sameName.isEmpty()) {
-                // Utiliser la carte existante et mettre à jour son externalId
                 cardEntity = sameName.get(0);
                 cardEntity.setExternalId(mtgCard.id());
-                updateCardEntity(cardEntity, mtgCard);
-                logger.debug("🔄 Carte existante trouvée par nom : {} (UUID préservé)", mtgCard.name());
+                updateCardEntityAdapted(cardEntity, mtgCard);
+                logger.debug("🔄 Carte existante trouvée par nom (adaptation) : {}", mtgCard.name());
             } else {
-                // Créer une nouvelle carte
-                cardEntity = createCardEntityWithUUID(mtgCard, setCode);
-                logger.debug("✨ Nouvelle carte créée : {} (External ID: {})", mtgCard.name(), mtgCard.id());
+                cardEntity = createCardEntityAdapted(mtgCard, setCode);
+                logger.debug("✨ Nouvelle carte créée avec adaptation : {}", mtgCard.name());
             }
         }
 
         try {
             return cardRepository.save(cardEntity);
         } catch (Exception e) {
-            logger.error("❌ Erreur sauvegarde carte {} : {}", mtgCard.name(), e.getMessage());
-            // En cas d'erreur UUID, essayer de créer une nouvelle carte
-            try {
-                MagicCard newCard = createCardEntityWithUUID(mtgCard, setCode);
-                return cardRepository.save(newCard);
-            } catch (Exception e2) {
-                logger.error("❌ Impossible de sauvegarder {} : {}", mtgCard.name(), e2.getMessage());
-                return null;
-            }
+            logger.error("❌ Erreur sauvegarde carte adaptée {} : {}", mtgCard.name(), e.getMessage());
+            return null;
         }
     }
+
     /**
-     * Méthode pour la compatibilité avec l'ancien code
+     * Crée une nouvelle entité extension - VERSION ADAPTÉE
      */
-    public MagicCard saveOrUpdateCard(MtgCard mtgCard, String setCode) {
-        return saveOrUpdateCardWithUUID(mtgCard, setCode);
+    private MagicSet createSetEntityAdapted(MtgSet mtgSet) {
+        MagicSet setEntity = new MagicSet();
+        setEntity.setCode(mtgSet.code());
+        setEntity.setName(mtgSet.name());
+        setEntity.setBlock(mtgSet.block());
+
+        // Adapter les champs spécifiques
+        setEntity.setMtgoCode(mtgSet.gathererCode());
+        setEntity.setTcgplayerGroupId(mtgSet.magicCardsInfoCode());
+        setEntity.setVersion(mtgSet.border());
+
+        // Utiliser le service d'adaptation pour le type
+        adaptationService.setMagicSetType(setEntity, mtgSet.type());
+        adaptationService.prepareMagicSetForSave(setEntity, mtgSet.type());
+
+        // Parser la date de sortie
+        if (mtgSet.releaseDate() != null && !mtgSet.releaseDate().isEmpty()) {
+            try {
+                setEntity.setReleaseDate(LocalDate.parse(mtgSet.releaseDate()));
+            } catch (Exception e) {
+                logger.warn("⚠️ Date de sortie invalide pour {} : {}", mtgSet.code(), mtgSet.releaseDate());
+            }
+        }
+
+        // Définir OnlineOnly basé sur la logique métier
+        if (mtgSet.onlineOnly()) {
+            setEntity.setOnlineOnly(true);
+        }
+
+        return setEntity;
     }
 
     /**
-     * Méthode pour la compatibilité avec l'ancien code - VERSION CORRIGÉE
+     * Met à jour une entité extension existante - VERSION ADAPTÉE
+     */
+    private void updateSetEntityAdapted(MagicSet setEntity, MtgSet mtgSet) {
+        setEntity.setName(mtgSet.name());
+        setEntity.setBlock(mtgSet.block());
+        setEntity.setMtgoCode(mtgSet.gathererCode());
+        setEntity.setTcgplayerGroupId(mtgSet.magicCardsInfoCode());
+        setEntity.setVersion(mtgSet.border());
+
+        // Mettre à jour le type si nécessaire
+        if (mtgSet.type() != null && !mtgSet.type().equals(setEntity.getType())) {
+            adaptationService.setMagicSetType(setEntity, mtgSet.type());
+        }
+
+        // Mettre à jour la date
+        if (mtgSet.releaseDate() != null && !mtgSet.releaseDate().isEmpty()) {
+            try {
+                setEntity.setReleaseDate(LocalDate.parse(mtgSet.releaseDate()));
+            } catch (Exception e) {
+                logger.warn("⚠️ Date de sortie invalide pour {} : {}", mtgSet.code(), mtgSet.releaseDate());
+            }
+        }
+
+        // Mettre à jour OnlineOnly
+        if (mtgSet.onlineOnly()) {
+            setEntity.setOnlineOnly(true);
+        }
+    }
+
+    /**
+     * Crée une nouvelle entité carte - VERSION ADAPTÉE
+     */
+    private MagicCard createCardEntityAdapted(MtgCard mtgCard, String setCode) {
+        MagicCard cardEntity = new MagicCard();
+        cardEntity.setExternalId(mtgCard.id());
+        cardEntity.setSetCode(setCode);
+        updateCardEntityAdapted(cardEntity, mtgCard);
+        return cardEntity;
+    }
+
+    /**
+     * Met à jour une entité carte - VERSION ADAPTÉE
+     */
+    private void updateCardEntityAdapted(MagicCard cardEntity, MtgCard mtgCard) {
+        // Données de base
+        cardEntity.setExternalId(mtgCard.id());
+        cardEntity.setName(mtgCard.name());
+        cardEntity.setSetCode(cardEntity.getSetCode()); // Garder le setCode existant
+
+        // Numéro de carte
+        if (mtgCard.number() != null) {
+            cardEntity.setNumber(mtgCard.number());
+        }
+
+        // Propriétés MTG dans les champs JSON adaptés
+        cardEntity.setManaCost(mtgCard.manaCost());
+        cardEntity.setCmc(mtgCard.cmc());
+        cardEntity.setRarity(mtgCard.rarity());
+        cardEntity.setType(mtgCard.type());
+        cardEntity.setText(mtgCard.text());
+        cardEntity.setArtist(mtgCard.artist());
+        cardEntity.setPower(mtgCard.power());
+        cardEntity.setToughness(mtgCard.toughness());
+        cardEntity.setLayout(mtgCard.layout());
+        cardEntity.setMultiverseid(mtgCard.multiverseid());
+        cardEntity.setSetName(mtgCard.setName());
+
+        // Collections
+        cardEntity.setColors(mtgCard.colors());
+        cardEntity.setColorIdentity(mtgCard.colorIdentity());
+        cardEntity.setSupertypes(mtgCard.supertypes());
+        cardEntity.setTypes(mtgCard.types());
+        cardEntity.setSubtypes(mtgCard.subtypes());
+
+        // URL d'image
+        String imageUrl = mtgCard.imageUrl();
+        if (imageUrl == null || imageUrl.isEmpty()) {
+            imageUrl = generateImageUrlAdapted(mtgCard);
+        }
+        cardEntity.setOriginalImageUrl(imageUrl);
+
+        // Propriétés spécifiques à la nouvelle structure
+        cardEntity.setIsAffichable(true); // Par défaut affichable
+        cardEntity.setHasRecherche(true); // Par défaut recherchable
+        cardEntity.setCertifiable(false); // Par défaut non certifiable
+    }
+
+    /**
+     * Met à jour les statistiques d'une extension - VERSION ADAPTÉE
+     */
+    private void updateSetStatisticsAdapted(String setCode) {
+        long cardCount = cardRepository.countBySetCode(setCode);
+
+        setRepository.findByCode(setCode).ifPresent(setEntity -> {
+            setEntity.setCardsCount((int) cardCount);
+            // La synchronisation est automatiquement déterminée par la présence de cartes
+            setRepository.save(setEntity);
+        });
+    }
+
+    /**
+     * Définit les dates de sortie connues - VERSION ADAPTÉE
+     */
+    private void setKnownReleaseDateAdapted(MagicSet set, String setCode) {
+        java.util.Map<String, LocalDate> knownDates = java.util.Map.of(
+                "BLB", LocalDate.of(2024, 8, 2),
+                "MH3", LocalDate.of(2024, 6, 14),
+                "OTJ", LocalDate.of(2024, 4, 19),
+                "MKM", LocalDate.of(2024, 2, 9),
+                "LCI", LocalDate.of(2023, 11, 17),
+                "FIN", LocalDate.of(2025, 6, 13)
+        );
+
+        LocalDate releaseDate = knownDates.get(setCode);
+        if (releaseDate != null) {
+            set.setReleaseDate(releaseDate);
+        }
+    }
+
+    /**
+     * Génère une URL d'image - VERSION ADAPTÉE
+     */
+    private String generateImageUrlAdapted(MtgCard card) {
+        if (card.multiverseid() != null) {
+            return "https://gatherer.wizards.com/Handlers/Image.ashx?multiverseid=" + card.multiverseid() + "&type=card";
+        }
+
+        if (card.set() != null && card.number() != null) {
+            return "https://api.scryfall.com/cards/" + card.set().toLowerCase() + "/" + card.number() + "?format=image";
+        }
+
+        return null;
+    }
+
+    // ========== MÉTHODES PUBLIQUES ADAPTÉES ==========
+
+    /**
+     * Méthode de compatibilité
+     */
+    public MagicCard saveOrUpdateCard(MtgCard mtgCard, String setCode) {
+        return saveOrUpdateCardAdapted(mtgCard, setCode);
+    }
+
+    /**
+     * Sauvegarde synchrone adaptée
      */
     public int saveCards(List<MtgCard> cards, String setCode) {
-        logger.info("💾 Début de la sauvegarde de {} cartes pour l'extension {}", cards.size(), setCode);
+        logger.info("💾 Début de la sauvegarde synchrone adaptée de {} cartes pour {}", cards.size(), setCode);
 
-        // CORRECTION: Créer l'extension si elle n'existe pas
-        ensureSetExists(setCode, cards);
+        ensureSetExistsAdapted(setCode, cards);
 
         int savedCount = 0;
-        int updatedCount = 0;
         int skippedCount = 0;
 
         for (MtgCard mtgCard : cards) {
             try {
-                MagicCard result = saveOrUpdateCardWithUUID(mtgCard, setCode);
+                MagicCard result = saveOrUpdateCardAdapted(mtgCard, setCode);
                 if (result != null) {
-                    if (result.getCreatedAt().equals(result.getUpdatedAt())) {
-                        savedCount++;
-                    } else {
-                        updatedCount++;
-                    }
+                    savedCount++;
 
-                    // Déclencher le téléchargement de l'image en arrière-plan
                     if (result.getOriginalImageUrl() != null && !result.getOriginalImageUrl().isEmpty()) {
                         try {
                             imageDownloadService.downloadCardImage(result);
@@ -241,30 +388,28 @@ public class CardPersistenceService {
                     skippedCount++;
                 }
             } catch (Exception e) {
-                logger.error("❌ Erreur lors de la sauvegarde de la carte {} : {}",
-                        mtgCard.name(), e.getMessage());
+                logger.error("❌ Erreur sauvegarde carte {} : {}", mtgCard.name(), e.getMessage());
                 skippedCount++;
             }
         }
 
-        // Mettre à jour les statistiques de l'extension
-        updateSetStatistics(setCode);
+        updateSetStatisticsAdapted(setCode);
 
-        logger.info("✅ Sauvegarde terminée pour {} : {} nouvelles, {} mises à jour, {} ignorées",
-                setCode, savedCount, updatedCount, skippedCount);
+        logger.info("✅ Sauvegarde adaptée terminée pour {} : {} sauvées, {} ignorées",
+                setCode, savedCount, skippedCount);
 
-        return savedCount + updatedCount;
+        return savedCount;
     }
 
     /**
-     * Récupère les cartes depuis la base de données
+     * Récupère les cartes depuis la base - VERSION ADAPTÉE
      */
     public List<MagicCard> getCardsFromDatabase(String setCode) {
         return cardRepository.findBySetCodeOrderByNameAsc(setCode);
     }
 
     /**
-     * Recherche de cartes avec filtres
+     * Recherche de cartes avec filtres - VERSION ADAPTÉE
      */
     public Page<MagicCard> searchCards(String name, String setCode, String rarity,
                                        String type, String artist, Pageable pageable) {
@@ -272,7 +417,7 @@ public class CardPersistenceService {
     }
 
     /**
-     * Vérifie si une extension est déjà synchronisée
+     * Vérifie si une extension est synchronisée - VERSION ADAPTÉE
      */
     public boolean isSetSynced(String setCode) {
         return setRepository.findByCode(setCode)
@@ -281,145 +426,27 @@ public class CardPersistenceService {
     }
 
     /**
-     * Marque une extension comme synchronisée
+     * Marque une extension comme synchronisée - VERSION ADAPTÉE
      */
     public void markSetAsSynced(String setCode) {
         setRepository.findByCode(setCode).ifPresent(setEntity -> {
-            setEntity.setCardsSynced(true);
-            setEntity.setLastSyncAt(LocalDateTime.now());
-            setRepository.save(setEntity);
-            logger.info("✅ Extension {} marquée comme synchronisée", setCode);
-        });
-    }
-
-    /**
-     * Met à jour les statistiques d'une extension
-     */
-    private void updateSetStatistics(String setCode) {
-        long cardCount = cardRepository.countBySetCode(setCode);
-
-        setRepository.findByCode(setCode).ifPresent(setEntity -> {
+            long cardCount = cardRepository.countBySetCode(setCode);
             setEntity.setCardsCount((int) cardCount);
-            setEntity.setCardsSynced(true);
-            setEntity.setLastSyncAt(LocalDateTime.now());
+            // La synchronisation est automatique basée sur nbCartes > 0
             setRepository.save(setEntity);
+            logger.info("✅ Extension {} marquée comme synchronisée ({} cartes)", setCode, cardCount);
         });
     }
 
     /**
-     * Crée une nouvelle entité extension
-     */
-    private MagicSet createSetEntity(MtgSet mtgSet) {
-        MagicSet setEntity = new MagicSet();
-        setEntity.setCode(mtgSet.code());
-        setEntity.setName(mtgSet.name());
-        setEntity.setType(mtgSet.type());
-        setEntity.setBlock(mtgSet.block());
-        setEntity.setGathererCode(mtgSet.gathererCode());
-        setEntity.setMagicCardsInfoCode(mtgSet.magicCardsInfoCode());
-        setEntity.setBorder(mtgSet.border());
-        setEntity.setOnlineOnly(mtgSet.onlineOnly());
-
-        // Parser la date de sortie
-        if (mtgSet.releaseDate() != null && !mtgSet.releaseDate().isEmpty()) {
-            try {
-                setEntity.setReleaseDate(LocalDate.parse(mtgSet.releaseDate()));
-            } catch (Exception e) {
-                logger.warn("⚠️ Date de sortie invalide pour {} : {}", mtgSet.code(), mtgSet.releaseDate());
-            }
-        }
-
-        return setEntity;
-    }
-
-    /**
-     * Met à jour une entité extension existante
-     */
-    private void updateSetEntity(MagicSet setEntity, MtgSet mtgSet) {
-        setEntity.setName(mtgSet.name());
-        setEntity.setType(mtgSet.type());
-        setEntity.setBlock(mtgSet.block());
-        setEntity.setGathererCode(mtgSet.gathererCode());
-        setEntity.setMagicCardsInfoCode(mtgSet.magicCardsInfoCode());
-        setEntity.setBorder(mtgSet.border());
-        setEntity.setOnlineOnly(mtgSet.onlineOnly());
-
-        if (mtgSet.releaseDate() != null && !mtgSet.releaseDate().isEmpty()) {
-            try {
-                setEntity.setReleaseDate(LocalDate.parse(mtgSet.releaseDate()));
-            } catch (Exception e) {
-                logger.warn("⚠️ Date de sortie invalide pour {} : {}", mtgSet.code(), mtgSet.releaseDate());
-            }
-        }
-    }
-
-    /**
-     * NOUVELLE MÉTHODE - Crée une nouvelle entité carte avec UUID
-     */
-    private MagicCard createCardEntityWithUUID(MtgCard mtgCard, String setCode) {
-        MagicCard cardEntity = new MagicCard();
-        cardEntity.setExternalId(mtgCard.id()); // Stocker l'ancien ID comme externalId
-        updateCardEntity(cardEntity, mtgCard);
-        cardEntity.setSetCode(setCode);
-        return cardEntity;
-    }
-
-    /**
-     * Met à jour une entité carte - VERSION UUID
-     */
-    private void updateCardEntity(MagicCard cardEntity, MtgCard mtgCard) {
-        cardEntity.setExternalId(mtgCard.id()); // Assurer que l'externalId est correct
-        cardEntity.setName(mtgCard.name());
-        cardEntity.setManaCost(mtgCard.manaCost());
-        cardEntity.setCmc(mtgCard.cmc());
-        cardEntity.setColors(mtgCard.colors());
-        cardEntity.setColorIdentity(mtgCard.colorIdentity());
-        cardEntity.setType(mtgCard.type());
-        cardEntity.setSupertypes(mtgCard.supertypes());
-        cardEntity.setTypes(mtgCard.types());
-        cardEntity.setSubtypes(mtgCard.subtypes());
-        cardEntity.setRarity(mtgCard.rarity());
-        cardEntity.setSetName(mtgCard.setName());
-        cardEntity.setText(mtgCard.text());
-        cardEntity.setArtist(mtgCard.artist());
-        cardEntity.setNumber(mtgCard.number());
-        cardEntity.setPower(mtgCard.power());
-        cardEntity.setToughness(mtgCard.toughness());
-        cardEntity.setLayout(mtgCard.layout());
-        cardEntity.setMultiverseid(mtgCard.multiverseid());
-
-        // Générer l'URL d'image si elle n'existe pas
-        String imageUrl = mtgCard.imageUrl();
-        if (imageUrl == null || imageUrl.isEmpty()) {
-            imageUrl = generateImageUrl(mtgCard);
-        }
-        cardEntity.setOriginalImageUrl(imageUrl);
-    }
-
-    /**
-     * Génère une URL d'image pour une carte
-     */
-    private String generateImageUrl(MtgCard card) {
-        // Si on a un multiverseId, utiliser l'URL Gatherer
-        if (card.multiverseid() != null) {
-            return "https://gatherer.wizards.com/Handlers/Image.ashx?multiverseid=" + card.multiverseid() + "&type=card";
-        }
-
-        // Sinon, utiliser Scryfall API comme fallback
-        if (card.set() != null && card.number() != null) {
-            return "https://api.scryfall.com/cards/" + card.set().toLowerCase() + "/" + card.number() + "?format=image";
-        }
-
-        return null;
-    }
-
-    /**
-     * Statistiques de la base de données
+     * Statistiques de la base de données - VERSION ADAPTÉE
      */
     public DatabaseStats getDatabaseStats() {
         long totalCards = cardRepository.count();
         long totalSets = setRepository.count();
         long syncedSets = setRepository.countSyncedSets();
+
+        // Compter les artistes depuis les attributs JSON
         long distinctArtists = cardRepository.countDistinctArtists();
 
         ImageDownloadService.ImageDownloadStats imageStats = imageDownloadService.getDownloadStats();
@@ -428,7 +455,7 @@ public class CardPersistenceService {
     }
 
     /**
-     * Classe pour les statistiques de la base
+     * Classe pour les statistiques - ADAPTÉE
      */
     public static class DatabaseStats {
         private final long totalCards;
@@ -451,5 +478,70 @@ public class CardPersistenceService {
         public long getSyncedSets() { return syncedSets; }
         public long getDistinctArtists() { return distinctArtists; }
         public ImageDownloadService.ImageDownloadStats getImageStats() { return imageStats; }
+    }
+
+    // ========== MÉTHODES DE NETTOYAGE ET MAINTENANCE ==========
+
+    /**
+     * Nettoie les données incohérentes
+     */
+    @Transactional
+    public void cleanupInconsistentData() {
+        logger.info("🧹 Nettoyage des données incohérentes");
+
+        // Supprimer les cartes sans extension valide
+        List<MagicCard> orphanCards = cardRepository.findAll().stream()
+                .filter(card -> card.getSetCode() == null ||
+                        setRepository.findByCode(card.getSetCode()).isEmpty())
+                .toList();
+
+        if (!orphanCards.isEmpty()) {
+            cardRepository.deleteAll(orphanCards);
+            logger.info("🗑️ {} cartes orphelines supprimées", orphanCards.size());
+        }
+
+        // Mettre à jour les compteurs d'extensions
+        List<MagicSet> allSets = setRepository.findAll();
+        for (MagicSet set : allSets) {
+            long actualCardCount = cardRepository.countBySetCode(set.getCode());
+            if (set.getCardsCount() == null || !set.getCardsCount().equals((int) actualCardCount)) {
+                set.setCardsCount((int) actualCardCount);
+                setRepository.save(set);
+                logger.debug("🔄 Compteur mis à jour pour {} : {} cartes", set.getCode(), actualCardCount);
+            }
+        }
+
+        logger.info("✅ Nettoyage terminé");
+    }
+
+    /**
+     * Valide la cohérence d'une extension
+     */
+    public boolean validateSetConsistency(String setCode) {
+        Optional<MagicSet> setOpt = setRepository.findByCode(setCode);
+        if (setOpt.isEmpty()) {
+            logger.error("❌ Extension {} non trouvée", setCode);
+            return false;
+        }
+
+        MagicSet set = setOpt.get();
+
+        // Valider avec le service d'adaptation
+        if (!adaptationService.validateMagicSet(set)) {
+            return false;
+        }
+
+        // Vérifier la cohérence des cartes
+        long actualCardCount = cardRepository.countBySetCode(setCode);
+        Integer declaredCardCount = set.getCardsCount();
+
+        if (declaredCardCount != null && !declaredCardCount.equals((int) actualCardCount)) {
+            logger.warn("⚠️ Incohérence pour {} : {} cartes déclarées vs {} réelles",
+                    setCode, declaredCardCount, actualCardCount);
+            return false;
+        }
+
+        logger.info("✅ Extension {} validée avec succès", setCode);
+        return true;
     }
 }

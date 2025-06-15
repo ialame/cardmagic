@@ -1,4 +1,3 @@
-// ========== SetRepository.java ==========
 package com.pcagrad.magic.repository;
 
 import com.pcagrad.magic.entity.MagicSet;
@@ -20,57 +19,122 @@ public interface SetRepository extends JpaRepository<MagicSet, UUID> {
     boolean existsByCode(String code);
     void deleteByCode(String code);
 
-    // Rechercher par nom (partiel)
-    List<MagicSet> findByNameContainingIgnoreCaseOrderByReleaseDateDesc(String name);
+    // Rechercher par nom dans les translations
+    @Query("SELECT DISTINCT ms FROM MagicSet ms " +
+            "JOIN ms.translations t " +
+            "WHERE LOWER(t.name) LIKE LOWER(CONCAT('%', :name, '%')) " +
+            "ORDER BY t.releaseDate DESC")
+    List<MagicSet> findByNameContainingIgnoreCaseOrderByReleaseDateDesc(@Param("name") String name);
 
     // Rechercher par bloc
     List<MagicSet> findByBlockOrderByReleaseDateDesc(String block);
 
-    // Extensions avec cartes synchronisées
+    // Extensions avec cartes synchronisées (basé sur nbCartes > 0)
+    @Query("SELECT ms FROM MagicSet ms WHERE ms.nbCartes > 0 " +
+            "ORDER BY (SELECT MAX(t.releaseDate) FROM ms.translations t) DESC")
     List<MagicSet> findByCardsSyncedTrueOrderByReleaseDateDesc();
 
-    // Extension la plus récente
-    @Query("SELECT s FROM MagicSet s WHERE s.releaseDate IS NOT NULL AND s.type != 'promo' AND s.type != 'token' ORDER BY s.releaseDate DESC")
+    // Extension la plus récente basée sur les translations
+    @Query("SELECT ms FROM MagicSet ms " +
+            "JOIN ms.translations t " +
+            "WHERE t.releaseDate IS NOT NULL " +
+            "AND ms.typeMagic.type NOT IN ('promo', 'token') " +
+            "ORDER BY t.releaseDate DESC")
     List<MagicSet> findLatestSets();
 
-    // Extensions par date de sortie
-    List<MagicSet> findByReleaseDateBetweenOrderByReleaseDateDesc(LocalDate start, LocalDate end);
+    // Extensions par date de sortie depuis les translations
+    @Query("SELECT DISTINCT ms FROM MagicSet ms " +
+            "JOIN ms.translations t " +
+            "WHERE t.releaseDate BETWEEN :start AND :end " +
+            "ORDER BY t.releaseDate DESC")
+    List<MagicSet> findByReleaseDateBetweenOrderByReleaseDateDesc(
+            @Param("start") LocalDate start,
+            @Param("end") LocalDate end);
 
     // Extensions récentes (derniers 2 ans)
-    @Query("SELECT s FROM MagicSet s WHERE s.releaseDate >= :since ORDER BY s.releaseDate DESC")
+    @Query("SELECT DISTINCT ms FROM MagicSet ms " +
+            "JOIN ms.translations t " +
+            "WHERE t.releaseDate >= :since " +
+            "ORDER BY t.releaseDate DESC")
     List<MagicSet> findRecentSets(@Param("since") LocalDate since);
 
-    // Recherche combinée
-    @Query("SELECT s FROM MagicSet s WHERE " +
-            "(:name IS NULL OR LOWER(s.name) LIKE LOWER(CONCAT('%', :name, '%'))) AND " +
-            "(:type IS NULL OR s.type = :type) AND " +
-            "(:block IS NULL OR LOWER(s.block) LIKE LOWER(CONCAT('%', :block, '%')))")
+    // Recherche combinée avec adaptations
+    @Query("SELECT DISTINCT ms FROM MagicSet ms " +
+            "JOIN ms.translations t " +
+            "WHERE (:name IS NULL OR LOWER(t.name) LIKE LOWER(CONCAT('%', :name, '%'))) " +
+            "AND (:type IS NULL OR ms.typeMagic.type = :type) " +
+            "AND (:block IS NULL OR LOWER(ms.block) LIKE LOWER(CONCAT('%', :block, '%')))")
     List<MagicSet> findSetsWithFilters(
             @Param("name") String name,
             @Param("type") String type,
             @Param("block") String block
     );
 
-    // Statistiques
-    @Query("SELECT s.type, COUNT(s) FROM MagicSet s GROUP BY s.type ORDER BY COUNT(s) DESC")
+    // Statistiques adaptées
+    @Query("SELECT mt.type, COUNT(ms) FROM MagicSet ms " +
+            "JOIN ms.typeMagic mt " +
+            "GROUP BY mt.type ORDER BY COUNT(ms) DESC")
     List<Object[]> countByType();
 
-    @Query("SELECT SUM(s.cardsCount) FROM MagicSet s WHERE s.cardsCount IS NOT NULL")
+    @Query("SELECT SUM(ms.nbCartes) FROM MagicSet ms WHERE ms.nbCartes IS NOT NULL")
     Long getTotalCardsCount();
 
     // Extensions populaires (avec le plus de cartes)
+    @Query("SELECT ms FROM MagicSet ms " +
+            "WHERE ms.nbCartes IS NOT NULL " +
+            "ORDER BY ms.nbCartes DESC")
     List<MagicSet> findTop10ByOrderByCardsCountDesc();
 
-    // Méthodes existantes
+    // Extensions non synchronisées (nbCartes = 0 ou null)
+    @Query("SELECT ms FROM MagicSet ms " +
+            "WHERE (ms.nbCartes IS NULL OR ms.nbCartes = 0) " +
+            "ORDER BY (SELECT MAX(t.releaseDate) FROM ms.translations t) DESC")
     List<MagicSet> findByCardsSyncedFalseOrderByReleaseDateDesc();
 
-    @Query("SELECT COUNT(s) FROM MagicSet s WHERE s.cardsSynced = true")
+    // Compter les extensions synchronisées
+    @Query("SELECT COUNT(ms) FROM MagicSet ms WHERE ms.nbCartes > 0")
     long countSyncedSets();
 
-    // Optionnel : autres méthodes utiles
-    Optional<MagicSet> findByName(String name);
-    List<MagicSet> findByTypeOrderByReleaseDateDesc(String type);
+    // Recherche par nom exact dans les translations
+    @Query("SELECT ms FROM MagicSet ms " +
+            "JOIN ms.translations t " +
+            "WHERE t.name = :name")
+    Optional<MagicSet> findByName(@Param("name") String name);
 
-    @Query("SELECT s FROM MagicSet s WHERE YEAR(s.releaseDate) = :year ORDER BY s.releaseDate DESC")
+    // Extensions par type
+    @Query("SELECT ms FROM MagicSet ms " +
+            "WHERE ms.typeMagic.type = :type " +
+            "ORDER BY (SELECT MAX(t.releaseDate) FROM ms.translations t) DESC")
+    List<MagicSet> findByTypeOrderByReleaseDateDesc(@Param("type") String type);
+
+    // Extensions par année depuis les translations
+    @Query("SELECT DISTINCT ms FROM MagicSet ms " +
+            "JOIN ms.translations t " +
+            "WHERE YEAR(t.releaseDate) = :year " +
+            "ORDER BY t.releaseDate DESC")
     List<MagicSet> findByReleaseDateYear(@Param("year") int year);
+
+    // NOUVELLES MÉTHODES SPÉCIFIQUES À LA STRUCTURE
+
+    // Trouver par nom dans une localisation spécifique
+    @Query("SELECT ms FROM MagicSet ms " +
+            "JOIN ms.translations t " +
+            "WHERE t.localization = :localization " +
+            "AND LOWER(t.name) LIKE LOWER(CONCAT('%', :name, '%'))")
+    List<MagicSet> findByNameInLocalization(
+            @Param("name") String name,
+            @Param("localization") com.pcagrad.magic.util.Localization localization);
+
+    // Extensions certifiables
+    @Query("SELECT ms FROM MagicSet ms WHERE ms.certifiable = true")
+    List<MagicSet> findCertifiableSets();
+
+    // Extensions par marché (FR/US)
+    @Query("SELECT ms FROM MagicSet ms WHERE ms.fr = :fr AND ms.us = :us")
+    List<MagicSet> findByMarket(@Param("fr") Boolean fr, @Param("us") Boolean us);
+
+    // Extensions avec images
+    @Query("SELECT ms FROM MagicSet ms WHERE ms.nbImages > 0")
+    List<MagicSet> findSetsWithImages();
 }
+
