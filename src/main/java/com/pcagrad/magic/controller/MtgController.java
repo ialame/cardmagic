@@ -1939,4 +1939,323 @@ public class MtgController {
         }
     }
 
+    /**
+     * 🔍 ENDPOINT DE DIAGNOSTIC FINAL FANTASY
+     * À ajouter dans MtgController.java
+     */
+    @GetMapping("/admin/diagnostic-fin")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> diagnosticFinalFantasy() {
+        try {
+            logger.info("🔍 === DIAGNOSTIC FINAL FANTASY COMPLET ===");
+
+            Map<String, Object> result = new HashMap<>();
+
+            // 1. Compter les cartes en base
+            long totalCards = cardRepository.countBySetCode("FIN");
+            result.put("totalCartes", totalCards);
+
+            if (totalCards == 0) {
+                result.put("probleme", "Aucune carte FIN en base de données");
+                return ResponseEntity.ok(ApiResponse.success(result, "Aucune carte FIN trouvée"));
+            }
+
+            // 2. Récupérer quelques cartes pour analyse détaillée
+            List<MagicCard> sampleCards = cardRepository.findBySetCode("FIN").stream()
+                    .limit(3)
+                    .collect(Collectors.toList());
+
+            List<Map<String, Object>> cardsAnalysis = new ArrayList<>();
+
+            for (MagicCard card : sampleCards) {
+                Map<String, Object> cardData = new HashMap<>();
+
+                // Champs de base
+                cardData.put("id", card.getId());
+                cardData.put("name", card.getName());
+                cardData.put("externalId", card.getExternalId());
+                cardData.put("setCode", card.getSetCode()); // Utilise zPostExtension
+
+                // *** CHAMPS PROBLÉMATIQUES ***
+                cardData.put("number", card.getNumber());  // ← Le bon champ
+                cardData.put("colors", card.getColors());
+                cardData.put("colorIdentity", card.getColorIdentity());
+                cardData.put("types", card.getTypes());
+                cardData.put("layout", card.getLayout());
+
+                // Autres champs MTG
+                cardData.put("rarity", card.getRarity());
+                cardData.put("manaCost", card.getManaCost());
+                cardData.put("cmc", card.getCmc());
+                cardData.put("type", card.getType());
+                cardData.put("text", card.getText());
+                cardData.put("artist", card.getArtist());
+                cardData.put("power", card.getPower());
+                cardData.put("toughness", card.getToughness());
+                cardData.put("setName", card.getSetName());
+
+                // Propriétés booléennes
+                cardData.put("hasFoil", card.getHasFoil());
+                cardData.put("isFoilOnly", card.getIsFoilOnly());
+                cardData.put("isOnlineOnly", card.getIsOnlineOnly());
+                cardData.put("hasNonFoil", card.getHasNonFoil());
+                cardData.put("isOversized", card.getIsOversized());
+                cardData.put("isTimeshifted", card.getIsTimeshifted());
+
+                cardsAnalysis.add(cardData);
+            }
+
+            result.put("exemplesCartes", cardsAnalysis);
+
+            // 3. Statistiques des champs manquants
+            Map<String, Object> statsChamps = new HashMap<>();
+
+            long cardsWithNumber = cardRepository.countBySetCodeAndNumberIsNotNull("FIN");
+            long cardsWithColors = cardRepository.countBySetCodeAndColorsIsNotNull("FIN");
+            long cardsWithColorIdentity = cardRepository.countBySetCodeAndColorIdentityIsNotNull("FIN");
+            long cardsWithTypes = cardRepository.countBySetCodeAndTypesIsNotNull("FIN");
+            long cardsWithLayout = cardRepository.countBySetCodeAndLayoutIsNotNull("FIN");
+
+            statsChamps.put("avecNumber", cardsWithNumber + "/" + totalCards);
+            statsChamps.put("avecColors", cardsWithColors + "/" + totalCards);
+            statsChamps.put("avecColorIdentity", cardsWithColorIdentity + "/" + totalCards);
+            statsChamps.put("avecTypes", cardsWithTypes + "/" + totalCards);
+            statsChamps.put("avecLayout", cardsWithLayout + "/" + totalCards);
+
+            result.put("statistiquesChamps", statsChamps);
+
+            // 4. Analyse des problèmes potentiels
+            List<String> problemes = new ArrayList<>();
+
+            if (cardsWithNumber < totalCards * 0.9) {
+                problemes.add("Beaucoup de cartes sans numéro (number)");
+            }
+            if (cardsWithColors < totalCards * 0.5) {
+                problemes.add("Beaucoup de cartes sans couleurs");
+            }
+            if (cardsWithTypes < totalCards * 0.9) {
+                problemes.add("Beaucoup de cartes sans types");
+            }
+            if (cardsWithLayout < totalCards * 0.9) {
+                problemes.add("Beaucoup de cartes sans layout");
+            }
+
+            result.put("problemesDetectes", problemes);
+
+            // 5. Vérification de l'extension
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
+            if (finSet.isPresent()) {
+                Map<String, Object> setInfo = new HashMap<>();
+                setInfo.put("nom", finSet.get().getName());
+                setInfo.put("type", finSet.get().getType());
+                setInfo.put("cardsCount", finSet.get().getCardsCount());
+                setInfo.put("releaseDate", finSet.get().getReleaseDate());
+                result.put("extensionInfo", setInfo);
+            } else {
+                problemes.add("Extension FIN non trouvée en base");
+            }
+
+            String message = String.format("Diagnostic FIN: %d cartes, %d problèmes détectés",
+                    totalCards, problemes.size());
+
+            logger.info("🔍 {}", message);
+            logger.info("📊 Problèmes: {}", problemes);
+
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur diagnostic FIN: {}", e.getMessage(), e);
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    /**
+     * 🔧 ENDPOINT DE SAUVEGARDE FINAL FANTASY CORRIGÉ
+     * À ajouter dans MtgController.java
+     */
+    @PostMapping("/admin/save-final-fantasy-fixed")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> saveFinalFantasyFixed() {
+        try {
+            logger.info("🔧 === SAUVEGARDE FINAL FANTASY CORRIGÉE ===");
+
+            // 1. Récupérer les cartes depuis Scryfall
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+            logger.info("📥 {} cartes récupérées depuis Scryfall", finCards.size());
+
+            if (finCards.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte récupérée depuis Scryfall"));
+            }
+
+            // 2. SUPPRESSION COMPLÈTE des cartes existantes avec leurs traductions
+            logger.info("🗑️ Suppression complète des cartes FIN existantes...");
+
+            // Supprimer d'abord les traductions
+            List<MagicCard> existingCards = cardRepository.findBySetCode("FIN");
+            for (MagicCard card : existingCards) {
+                if (card.getTranslations() != null) {
+                    card.getTranslations().clear();
+                }
+            }
+            cardRepository.saveAll(existingCards);
+            cardRepository.flush();
+
+            // Puis supprimer les cartes
+            int deletedCount = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            cardRepository.flush();
+            logger.info("✅ {} cartes supprimées", deletedCount);
+
+            // 3. S'assurer que l'extension existe
+            Optional<MagicSet> finSetOpt = setRepository.findByCode("FIN");
+            if (finSetOpt.isEmpty()) {
+                MagicSet newSet = new MagicSet();
+                newSet.setCode("FIN");
+                newSet.setName("Magic: The Gathering - FINAL FANTASY");
+                adaptationService.setMagicSetType(newSet, "expansion");
+                adaptationService.prepareMagicSetForSave(newSet, "expansion");
+                newSet.setReleaseDate(LocalDate.of(2024, 11, 15));
+                setRepository.save(newSet);
+                logger.info("✅ Extension FIN créée");
+            }
+
+            // 4. SAUVEGARDE MANUELLE DIRECTE (pas de service défaillant)
+            int savedCount = 0;
+            int errorCount = 0;
+            ObjectMapper mapper = new ObjectMapper();
+
+            for (MtgCard mtgCard : finCards) {
+                try {
+                    // Créer l'entité carte
+                    MagicCard entity = new MagicCard();
+                    entity.setId(UUID.randomUUID());
+
+                    // ID externe sécurisé
+                    String externalId = mtgCard.id() != null ?
+                            (mtgCard.id().length() > 20 ? mtgCard.id().substring(0, 20) : mtgCard.id())
+                            : "fin_" + savedCount;
+                    entity.setExternalId(externalId);
+                    entity.setSetCode("FIN"); // utilise zPostExtension
+
+                    // *** CHAMPS JSON ATTRIBUTES COMPLETS ***
+                    Map<String, Object> attributes = new HashMap<>();
+                    attributes.put("name", mtgCard.name());
+                    attributes.put("manaCost", mtgCard.manaCost());
+                    attributes.put("cmc", mtgCard.cmc());
+                    attributes.put("type", mtgCard.type());
+                    attributes.put("rarity", mtgCard.rarity());
+                    attributes.put("text", mtgCard.text());
+                    attributes.put("artist", mtgCard.artist());
+                    attributes.put("power", mtgCard.power());
+                    attributes.put("toughness", mtgCard.toughness());
+                    attributes.put("layout", mtgCard.layout() != null ? mtgCard.layout() : "normal");
+                    attributes.put("setName", mtgCard.setName());
+                    attributes.put("multiverseid", mtgCard.multiverseid());
+
+                    entity.setAttributes(mapper.writeValueAsString(attributes));
+
+                    // *** CHAMPS JSON ALLOWED_NOTES COMPLETS ***
+                    Map<String, Object> allowedNotes = new HashMap<>();
+                    allowedNotes.put("colors", mtgCard.colors() != null ? mtgCard.colors() : new ArrayList<>());
+                    allowedNotes.put("colorIdentity", mtgCard.colorIdentity() != null ? mtgCard.colorIdentity() : new ArrayList<>());
+                    allowedNotes.put("types", mtgCard.types() != null ? mtgCard.types() : new ArrayList<>());
+                    allowedNotes.put("supertypes", mtgCard.supertypes() != null ? mtgCard.supertypes() : new ArrayList<>());
+                    allowedNotes.put("subtypes", mtgCard.subtypes() != null ? mtgCard.subtypes() : new ArrayList<>());
+
+                    entity.setAllowedNotes(mapper.writeValueAsString(allowedNotes));
+
+                    // Numéro de carte
+                    if (mtgCard.number() != null) {
+                        try {
+                            entity.setNumero(Integer.parseInt(mtgCard.number().replaceAll("\\D", "")));
+                        } catch (NumberFormatException e) {
+                            entity.setNumero(null);
+                        }
+                    }
+
+                    // Propriétés booléennes
+                    entity.setHasFoil(true);
+                    entity.setHasNonFoil(true);
+                    entity.setIsFoilOnly(false);
+                    entity.setIsOnlineOnly(false);
+                    entity.setIsOversized(false);
+                    entity.setIsTimeshifted(false);
+                    entity.setIsToken(false);
+                    entity.setIsReclassee(false);
+                    entity.setHasDateFr(false);
+                    entity.setIsAffichable(true);
+                    entity.setHasRecherche(true);
+                    entity.setCertifiable(false);
+                    entity.setHasImg(false);
+
+                    // *** TRADUCTION UNIQUE SANS CONFLIT ***
+                    CardTranslation translation = new CardTranslation();
+                    translation.setId(UUID.randomUUID());
+                    translation.setLocalization(Localization.USA);
+                    translation.setAvailable(true);
+                    translation.setName(mtgCard.name() != null ? mtgCard.name() : "Carte inconnue");
+                    translation.setLabelName(mtgCard.name() != null ? mtgCard.name() : "Carte inconnue");
+                    translation.setTranslatable(entity);
+
+                    // Ajouter la traduction à l'entité
+                    entity.getTranslations().put(Localization.USA, translation);
+
+                    // Sauvegarder directement
+                    MagicCard savedCard = cardRepository.save(entity);
+                    savedCount++;
+
+                    if (savedCount % 50 == 0) {
+                        logger.info("📊 {} cartes sauvegardées avec tous les champs...", savedCount);
+                    }
+
+                } catch (Exception e) {
+                    logger.error("❌ Erreur sauvegarde carte {} : {}", mtgCard.name(), e.getMessage());
+                    errorCount++;
+                }
+            }
+
+            // 5. Mettre à jour l'extension
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
+            if (finSet.isPresent()) {
+                MagicSet set = finSet.get();
+                set.setCardsCount(savedCount);
+                setRepository.save(set);
+            }
+
+            // 6. Résultat avec vérification
+            Map<String, Object> result = new HashMap<>();
+            result.put("cartesRecuperees", finCards.size());
+            result.put("cartesSauvegardees", savedCount);
+            result.put("cartesEnErreur", errorCount);
+            result.put("tauxSucces", finCards.size() > 0 ? (savedCount * 100.0) / finCards.size() : 0);
+            result.put("succes", savedCount >= 300);
+
+            // Vérification immédiate des champs
+            List<MagicCard> verificationCards = cardRepository.findBySetCode("FIN").stream().limit(3).toList();
+            List<Map<String, Object>> verification = new ArrayList<>();
+
+            for (MagicCard card : verificationCards) {
+                Map<String, Object> cardCheck = new HashMap<>();
+                cardCheck.put("name", card.getName());
+                cardCheck.put("number", card.getNumber());
+                cardCheck.put("colors", card.getColors());
+                cardCheck.put("colorIdentity", card.getColorIdentity());
+                cardCheck.put("types", card.getTypes());
+                cardCheck.put("layout", card.getLayout());
+                cardCheck.put("rarity", card.getRarity());
+                verification.add(cardCheck);
+            }
+            result.put("verificationChamps", verification);
+
+            String message = String.format("Final Fantasy CORRIGÉ: %d/%d cartes avec TOUS les champs (%d erreurs)",
+                    savedCount, finCards.size(), errorCount);
+
+            logger.info("🎉 {}", message);
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sauvegarde corrigée FIN : {}", e.getMessage(), e);
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
 }

@@ -210,4 +210,19 @@ public interface CardRepository extends JpaRepository<MagicCard, UUID> {
     @Query("DELETE FROM MagicCard mc WHERE UPPER(mc.zPostExtension) = UPPER(:setCode)")
     int deleteBySetCodeIgnoreCase(@Param("setCode") String setCode);
 
+    // Compter les cartes avec des champs spécifiques non-null
+    @Query("SELECT COUNT(c) FROM MagicCard c WHERE c.zPostExtension = :setCode AND c.numero IS NOT NULL")
+    long countBySetCodeAndNumberIsNotNull(@Param("setCode") String setCode);
+
+    @Query("SELECT COUNT(c) FROM MagicCard c WHERE c.zPostExtension = :setCode AND c.allowedNotes LIKE '%\"colors\":%'")
+    long countBySetCodeAndColorsIsNotNull(@Param("setCode") String setCode);
+
+    @Query("SELECT COUNT(c) FROM MagicCard c WHERE c.zPostExtension = :setCode AND c.allowedNotes LIKE '%\"colorIdentity\":%'")
+    long countBySetCodeAndColorIdentityIsNotNull(@Param("setCode") String setCode);
+
+    @Query("SELECT COUNT(c) FROM MagicCard c WHERE c.zPostExtension = :setCode AND c.allowedNotes LIKE '%\"types\":%'")
+    long countBySetCodeAndTypesIsNotNull(@Param("setCode") String setCode);
+
+    @Query("SELECT COUNT(c) FROM MagicCard c WHERE c.zPostExtension = :setCode AND c.attributes LIKE '%\"layout\":%'")
+    long countBySetCodeAndLayoutIsNotNull(@Param("setCode") String setCode);
 }
