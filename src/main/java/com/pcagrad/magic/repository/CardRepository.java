@@ -19,6 +19,92 @@ import java.util.UUID;
 @Repository
 public interface CardRepository extends JpaRepository<MagicCard, UUID> {
 
+    /**
+     * Supprimer les cartes sans traductions
+     */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MagicCard mc WHERE mc.id NOT IN " +
+            "(SELECT DISTINCT t.translatable.id FROM CardTranslation t)")
+    int deleteCardsWithoutTranslations();
+
+    /**
+     * Trouver par ID externe ET setCode
+     */
+    @Query("SELECT mc FROM MagicCard mc WHERE mc.idPrim = :externalId AND mc.zPostExtension = :setCode")
+    Optional<MagicCard> findByExternalIdAndSetCode(@Param("externalId") String externalId, @Param("setCode") String setCode);
+
+    /**
+     * Trouver par nom ET setCode
+     */
+    @Query("SELECT mc FROM MagicCard mc " +
+            "JOIN mc.translations t " +
+            "WHERE t.name = :name AND mc.zPostExtension = :setCode AND t.localization = com.pcagrad.magic.util.Localization.USA")
+    List<MagicCard> findByNameAndSetCode(@Param("name") String name, @Param("setCode") String setCode);
+
+    /**
+     * Recherche avec filtres
+     */
+//    @Query("SELECT mc FROM MagicCard mc " +
+//            "JOIN mc.translations t " +
+//            "WHERE (:name IS NULL OR t.name LIKE %:name%) " +
+//            "AND (:setCode IS NULL OR mc.zPostExtension = :setCode) " +
+//            "AND (:rarity IS NULL OR mc.rarity = :rarity) " +
+//            "AND (:type IS NULL OR mc.type LIKE %:type%) " +
+//            "AND (:artist IS NULL OR mc.artist LIKE %:artist%) " +
+//            "AND t.localization = com.pcagrad.magic.util.Localization.USA")
+//    Page<MagicCard> findCardsWithFilters(@Param("name") String name,
+//                                         @Param("setCode") String setCode,
+//                                         @Param("rarity") String rarity,
+//                                         @Param("type") String type,
+//                                         @Param("artist") String artist,
+//                                         Pageable pageable);
+
+
+    @Query("SELECT mc FROM MagicCard mc " +
+            "JOIN mc.translations t " +
+            "WHERE (:name IS NULL OR LOWER(t.name) LIKE LOWER(CONCAT('%', :name, '%'))) " +
+            "AND (:setCode IS NULL OR mc.zPostExtension = :setCode) " +
+            "AND (:rarity IS NULL OR mc.attributes LIKE CONCAT('%\"rarity\":\"', :rarity, '%')) " +
+            "AND (:type IS NULL OR mc.attributes LIKE CONCAT('%\"type\":', '%', :type, '%')) " +
+            "AND (:artist IS NULL OR mc.attributes LIKE CONCAT('%\"artist\":\"', :artist, '%')) " +
+            "AND t.localization = com.pcagrad.magic.util.Localization.USA")
+    Page<MagicCard> findCardsWithFilters(@Param("name") String name,
+                                         @Param("setCode") String setCode,
+                                         @Param("rarity") String rarity,
+                                         @Param("type") String type,
+                                         @Param("artist") String artist,
+                                         Pageable pageable);
+
+    /**
+     * Recherche simple par nom et setCode seulement
+     */
+    @Query("SELECT mc FROM MagicCard mc " +
+            "JOIN mc.translations t " +
+            "WHERE (:name IS NULL OR LOWER(t.name) LIKE LOWER(CONCAT('%', :name, '%'))) " +
+            "AND (:setCode IS NULL OR mc.zPostExtension = :setCode) " +
+            "AND t.localization = com.pcagrad.magic.util.Localization.USA")
+    Page<MagicCard> searchCardsByNameAndSet(@Param("name") String name,
+                                            @Param("setCode") String setCode,
+                                            Pageable pageable);
+
+    /**
+     * Compter les cartes avec traductions par setCode
+     */
+    @Query("SELECT COUNT(DISTINCT mc) FROM MagicCard mc " +
+            "JOIN mc.translations t " +
+            "WHERE mc.zPostExtension = :setCode")
+    long countCardsWithTranslationsBySetCode(@Param("setCode") String setCode);
+
+    /**
+     * Compter les cartes avec images par setCode
+     */
+    @Query("SELECT COUNT(mc) FROM MagicCard mc " +
+            "WHERE mc.zPostExtension = :setCode AND mc.hasImg = true")
+    long countCardsWithImagesBySetCode(@Param("setCode") String setCode);
+
+
+
     // Méthodes de base par setCode (stocké dans zPostExtension)
     @Query("SELECT mc FROM MagicCard mc WHERE mc.zPostExtension = :setCode")
     List<MagicCard> findBySetCode(@Param("setCode") String setCode);
@@ -38,30 +124,11 @@ public interface CardRepository extends JpaRepository<MagicCard, UUID> {
     // Recherche par ID externe (stocké dans idPrim)
     Optional<MagicCard> findByIdPrim(String idPrim);
 
-    @Query("SELECT mc FROM MagicCard mc " +
-            "WHERE mc.idPrim = :externalId AND mc.zPostExtension = :setCode")
-    Optional<MagicCard> findByExternalIdAndSetCode(
-            @Param("externalId") String externalId,
-            @Param("setCode") String setCode);
+
 
     @Query("SELECT COUNT(mc) > 0 FROM MagicCard mc WHERE mc.idPrim = :idPrim AND mc.zPostExtension = :zPostExtension")
     boolean existsByIdPrimAndZPostExtension(@Param("idPrim") String idPrim, @Param("zPostExtension") String zPostExtension);
 
-    // Recherche avec filtres adaptée
-    @Query("SELECT mc FROM MagicCard mc " +
-            "JOIN mc.translations t " +
-            "WHERE (:setCode IS NULL OR mc.zPostExtension = :setCode) " +
-            "AND (:name IS NULL OR LOWER(t.name) LIKE LOWER(CONCAT('%', :name, '%'))) " +
-            "AND (:type IS NULL OR mc.attributes LIKE CONCAT('%\"type\":\"', :type, '%')) " +
-            "AND (:rarity IS NULL OR mc.attributes LIKE CONCAT('%\"rarity\":\"', :rarity, '%')) " +
-            "AND (:artist IS NULL OR mc.attributes LIKE CONCAT('%\"artist\":\"', :artist, '%'))")
-    Page<MagicCard> findCardsWithFilters(
-            @Param("name") String name,
-            @Param("setCode") String setCode,
-            @Param("rarity") String rarity,
-            @Param("type") String type,
-            @Param("artist") String artist,
-            Pageable pageable);
 
     // Pour ImageDownloadService (basé sur hasImg)
     @Query("SELECT mc FROM MagicCard mc WHERE mc.hasImg = true AND mc.fusionPca IS NOT NULL")
@@ -70,11 +137,6 @@ public interface CardRepository extends JpaRepository<MagicCard, UUID> {
     @Query("SELECT mc FROM MagicCard mc WHERE mc.hasImg = false ORDER BY mc.numero ASC")
     List<MagicCard> findByImageDownloadedFalseOrderByCreatedAtAsc();
 
-    // Suppression par code d'extension
-    @Modifying
-    @Transactional
-    @Query("DELETE FROM MagicCard mc WHERE UPPER(mc.zPostExtension) = UPPER(:setCode)")
-    int deleteBySetCodeIgnoreCase(@Param("setCode") String setCode);
 
     @Modifying
     @Transactional
@@ -119,11 +181,6 @@ public interface CardRepository extends JpaRepository<MagicCard, UUID> {
             @Param("externalId") String externalId,
             @Param("setCode") String setCode);
 
-    @Query("SELECT mc FROM MagicCard mc " +
-            "JOIN mc.translations t " +
-            "WHERE t.name = :name AND mc.zPostExtension = :setCode " +
-            "AND t.localization = com.pcagrad.magic.util.Localization.USA")
-    List<MagicCard> findByNameAndSetCode(@Param("name") String name, @Param("setCode") String setCode);
 
     // NOUVELLES MÉTHODES SPÉCIFIQUES
 
@@ -142,4 +199,15 @@ public interface CardRepository extends JpaRepository<MagicCard, UUID> {
     // Cartes par numéro
     @Query("SELECT mc FROM MagicCard mc WHERE mc.numero = :numero AND mc.zPostExtension = :setCode")
     Optional<MagicCard> findByNumeroAndSetCode(@Param("numero") Integer numero, @Param("setCode") String setCode);
+
+
+
+    /**
+     * Supprimer par setCode (ignore case)
+     */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MagicCard mc WHERE UPPER(mc.zPostExtension) = UPPER(:setCode)")
+    int deleteBySetCodeIgnoreCase(@Param("setCode") String setCode);
+
 }

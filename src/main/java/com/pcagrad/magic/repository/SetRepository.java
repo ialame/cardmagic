@@ -1,7 +1,9 @@
 package com.pcagrad.magic.repository;
 
 import com.pcagrad.magic.entity.MagicSet;
+import jakarta.transaction.Transactional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -140,5 +142,17 @@ public interface SetRepository extends JpaRepository<MagicSet, UUID> {
     // Extensions avec images
     @Query("SELECT ms FROM MagicSet ms WHERE ms.nbImages > 0")
     List<MagicSet> findSetsWithImages();
+
+    /**
+     * ✅ MÉTHODE MANQUANTE: Supprimer les extensions vides
+     */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MagicSet ms WHERE ms.code NOT IN " +
+            "(SELECT DISTINCT mc.zPostExtension FROM MagicCard mc WHERE mc.zPostExtension IS NOT NULL)")
+    int deleteEmptySets();
+
+
+
 }
 

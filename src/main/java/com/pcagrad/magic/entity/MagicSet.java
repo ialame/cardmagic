@@ -160,15 +160,17 @@ public class MagicSet extends CardSet {
         return "Extension " + code;
     }
 
-    // *** AMÉLIORATION : Méthode setName() corrigée ***
+    /**
+     * ✅ CORRECTION 4: Méthode setName dans MagicSet
+     */
     public void setName(String name) {
         ensureTranslationExists(Localization.USA);
         CardSetTranslation translation = getTranslation(Localization.USA);
 
         if (translation != null) {
-            translation.setName(name);
-            // *** CORRECTION : Mettre à jour aussi label_name ***
-            translation.setLabelName(name);
+            String safeName = name != null ? name : "Extension inconnue";
+            translation.setName(safeName);
+            translation.setLabelName(safeName); // ← TOUJOURS la même valeur
         }
     }
 
@@ -195,17 +197,23 @@ public class MagicSet extends CardSet {
         }
     }
 
-    // MÉTHODES UTILITAIRES
+    // ================================================================
+// CORRECTION 3: Dans MagicSet.java - ensureTranslationExists RESTE CORRECT
+// ================================================================
+
+    /**
+     * ✅ Dans MagicSet.java, la méthode reste correcte mais voici la version complète :
+     */
     public void ensureTranslationExists(Localization localization) {
         if (getTranslation(localization) == null) {
             CardSetTranslation translation = new CardSetTranslation();
             translation.setLocalization(localization);
             translation.setAvailable(true);
 
-            // *** CORRECTION : Définir le name et label_name ***
+            // Définir name ET label_name (ici 'code' existe bien dans MagicSet)
             String defaultName = "Extension " + (code != null ? code : "Unknown");
             translation.setName(defaultName);
-            translation.setLabelName(defaultName); // ← AJOUTÉ : Définir label_name
+            translation.setLabelName(defaultName); // ← MÊME VALEUR
 
             // Définir une date par défaut
             translation.setReleaseDate(java.time.LocalDateTime.now());

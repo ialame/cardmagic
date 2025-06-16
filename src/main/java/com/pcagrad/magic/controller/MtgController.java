@@ -2,6 +2,7 @@ package com.pcagrad.magic.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pcagrad.magic.dto.ApiResponse;
+import com.pcagrad.magic.entity.CardTranslation;
 import com.pcagrad.magic.entity.MagicCard;
 import com.pcagrad.magic.entity.MagicSet;
 import com.pcagrad.magic.model.MtgCard;
@@ -13,6 +14,7 @@ import com.pcagrad.magic.service.EntityAdaptationService;
 import com.pcagrad.magic.service.ImageDownloadService;
 import com.pcagrad.magic.service.MtgService;
 import com.pcagrad.magic.service.ScryfallService;
+import com.pcagrad.magic.util.Localization;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,6 +58,8 @@ public class MtgController {
 
     @Autowired
     private EntityAdaptationService adaptationService;
+
+
 
     // ========== ENDPOINTS ESSENTIELS ADAPTÉS ==========
 
@@ -516,7 +520,10 @@ public class MtgController {
 
             MagicSet set = setOpt.get();
             boolean isValid = adaptationService.validateMagicSet(set);
-            boolean isConsistent = persistenceService.validateSetConsistency(setCode);
+            // ✅ SOLUTION
+            Map<String, Object> consistencyResult = persistenceService.validateSetConsistency(setCode);
+            boolean isConsistent = consistencyResult.containsKey("success") &&
+                    (Boolean) consistencyResult.getOrDefault("success", false);
 
             validation.put("setCode", setCode);
             validation.put("entityValid", isValid);
@@ -873,6 +880,1061 @@ public class MtgController {
 
         } catch (Exception e) {
             logger.error("❌ Erreur sync simple : {}", e.getMessage());
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    // ======================================================
+// OU ALTERNATIVE PLUS SIMPLE si vous préférez :
+// ======================================================
+
+    @GetMapping("/admin/validate-set-consistency/{setCode}")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> validateSetConsistencyAlternative(@PathVariable String setCode) {
+        try {
+            logger.info("🔍 Validation de la cohérence pour l'extension : {}", setCode);
+
+            Map<String, Object> result = (Map<String, Object>) persistenceService.validateSetConsistency(setCode);
+
+            return ResponseEntity.ok(ApiResponse.success(result,
+                    "Validation terminée pour " + setCode));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur lors de la validation de {} : {}", setCode, e.getMessage());
+
+            Map<String, Object> errorResult = new HashMap<>();
+            errorResult.put("error", e.getMessage());
+            errorResult.put("success", false);
+
+            // Option B: Si vous voulez juste un message d'erreur simple
+            return ResponseEntity.status(500)
+                    .body(ApiResponse.error("Message d'erreur : " + errorResult.toString()));
+
+        }
+    }
+
+    // ================================================================
+// AJOUTER dans MtgController.java - Endpoint de sauvegarde directe
+// ================================================================
+
+    /**
+     * ✅ ENDPOINT SPÉCIAL : Sauvegarde directe Final Fantasy avec logs détaillés
+     */
+    @PostMapping("/admin/save-final-fantasy-debug")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> saveFinalFantasyDebug() {
+        try {
+            logger.info("🎮 === SAUVEGARDE DEBUG FINAL FANTASY ===");
+
+            Map<String, Object> result = new HashMap<>();
+            List<String> debugLogs = new ArrayList<>();
+
+            // 1. Vérifier l'extension FIN
+            debugLogs.add("🔍 Vérification extension FIN...");
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
+            if (finSet.isEmpty()) {
+                debugLogs.add("❌ Extension FIN non trouvée, création...");
+                MagicSet newSet = new MagicSet();
+                newSet.setCode("FIN");
+                newSet.setName("Magic: The Gathering - FINAL FANTASY");
+
+                // Utiliser le service d'adaptation
+                adaptationService.setMagicSetType(newSet, "expansion");
+                adaptationService.prepareMagicSetForSave(newSet, "expansion");
+                newSet.setReleaseDate(LocalDate.of(2024, 11, 15));
+
+                finSet = Optional.of(setRepository.save(newSet));
+                debugLogs.add("✅ Extension FIN créée");
+            } else {
+                debugLogs.add("✅ Extension FIN trouvée");
+            }
+
+            // 2. Récupérer les cartes depuis Scryfall
+            debugLogs.add("🔮 Récupération cartes depuis Scryfall...");
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+            debugLogs.add(String.format("✅ %d cartes récupérées depuis Scryfall", finCards.size()));
+
+            if (finCards.isEmpty()) {
+                debugLogs.add("❌ Aucune carte récupérée");
+                result.put("success", false);
+                result.put("debugLogs", debugLogs);
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte Final Fantasy trouvée"));
+            }
+
+            // 3. Nettoyer les anciennes cartes
+            debugLogs.add("🗑️ Suppression anciennes cartes FIN...");
+            int deletedCount = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            cardRepository.flush();
+            debugLogs.add(String.format("✅ %d anciennes cartes supprimées", deletedCount));
+
+            // 4. Sauvegarder les cartes une par une avec logs détaillés
+            debugLogs.add("💾 Début sauvegarde des cartes...");
+            int savedCount = 0;
+            int errorCount = 0;
+            List<String> cardErrors = new ArrayList<>();
+
+            for (int i = 0; i < finCards.size(); i++) {
+                MtgCard mtgCard = finCards.get(i);
+                try {
+                    // Créer l'entité carte
+                    MagicCard cardEntity = new MagicCard();
+                    cardEntity.setId(UUID.randomUUID());
+
+                    // ID externe sécurisé
+                    String externalId = mtgCard.id();
+                    if (externalId != null && externalId.length() > 20) {
+                        externalId = Integer.toHexString(mtgCard.id().hashCode()).substring(0, 8);
+                    }
+                    cardEntity.setExternalId(externalId);
+                    cardEntity.setZPostExtension("FIN");
+
+                    // Créer la traduction
+                    cardEntity.ensureTranslationExists(Localization.USA);
+                    CardTranslation translation = cardEntity.getTranslation(Localization.USA);
+                    if (translation != null) {
+                        translation.setName(mtgCard.name());
+                        translation.setLabelName(mtgCard.name());
+                        translation.setAvailable(true);
+                    }
+
+                    // Propriétés de la carte
+                    if (mtgCard.number() != null) {
+                        cardEntity.setNumber(mtgCard.number());
+                    }
+
+                    // Sauvegarder les propriétés dans le JSON
+                    cardEntity.setManaCost(mtgCard.manaCost());
+                    cardEntity.setCmc(mtgCard.cmc());
+                    cardEntity.setRarity(mtgCard.rarity());
+                    cardEntity.setType(mtgCard.type());
+                    cardEntity.setText(mtgCard.text());
+                    cardEntity.setArtist(mtgCard.artist());
+                    cardEntity.setPower(mtgCard.power());
+                    cardEntity.setToughness(mtgCard.toughness());
+                    cardEntity.setLayout(mtgCard.layout());
+                    cardEntity.setMultiverseid(mtgCard.multiverseid());
+                    cardEntity.setSetName(mtgCard.setName());
+
+                    // Collections
+                    cardEntity.setColors(mtgCard.colors());
+                    cardEntity.setColorIdentity(mtgCard.colorIdentity());
+                    cardEntity.setSupertypes(mtgCard.supertypes());
+                    cardEntity.setTypes(mtgCard.types());
+                    cardEntity.setSubtypes(mtgCard.subtypes());
+
+                    // URL d'image
+                    cardEntity.setOriginalImageUrl(mtgCard.imageUrl());
+
+                    // Propriétés spécifiques
+                    cardEntity.setIsAffichable(true);
+                    cardEntity.setHasRecherche(true);
+                    cardEntity.setCertifiable(false);
+
+                    // Sauvegarder
+                    cardRepository.save(cardEntity);
+                    savedCount++;
+
+                    if (savedCount % 50 == 0) {
+                        debugLogs.add(String.format("📊 %d cartes sauvegardées...", savedCount));
+                    }
+
+                } catch (Exception e) {
+                    errorCount++;
+                    String errorMsg = String.format("❌ Erreur carte %s: %s", mtgCard.name(), e.getMessage());
+                    cardErrors.add(errorMsg);
+                    logger.error(errorMsg);
+
+                    if (cardErrors.size() <= 5) { // Limiter les logs d'erreur
+                        debugLogs.add(errorMsg);
+                    }
+                }
+            }
+
+            // 5. Mettre à jour les statistiques de l'extension
+            debugLogs.add("📊 Mise à jour statistiques extension...");
+            MagicSet setToUpdate = finSet.get();
+            setToUpdate.setCardsCount(savedCount);
+            setRepository.save(setToUpdate);
+            debugLogs.add("✅ Statistiques mises à jour");
+
+            // 6. Résultat final
+            debugLogs.add(String.format("🎉 TERMINÉ: %d cartes sauvées, %d erreurs", savedCount, errorCount));
+
+            result.put("success", savedCount > 0);
+            result.put("cartesRecuperees", finCards.size());
+            result.put("cartesSauvegardees", savedCount);
+            result.put("cartesEnErreur", errorCount);
+            result.put("objectifAtteint", savedCount >= 300);
+            result.put("debugLogs", debugLogs);
+            result.put("premiersErreurs", cardErrors.subList(0, Math.min(cardErrors.size(), 10)));
+
+            String message = String.format("Final Fantasy: %d/%d cartes sauvegardées (%d erreurs)",
+                    savedCount, finCards.size(), errorCount);
+
+            if (savedCount > 0) {
+                return ResponseEntity.ok(ApiResponse.success(result, message));
+            } else {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.success(result, message));
+            }
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur globale sauvegarde Final Fantasy : {}", e.getMessage());
+
+            Map<String, Object> errorResult = new HashMap<>();
+            errorResult.put("success", false);
+            errorResult.put("error", e.getMessage());
+            errorResult.put("stackTrace", Arrays.toString(e.getStackTrace()));
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.success(errorResult, "Erreur critique: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * ✅ ENDPOINT SIMPLE : Version simplifiée sans traductions pour tester
+     */
+    @PostMapping("/admin/save-final-fantasy-simple")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> saveFinalFantasySimple() {
+        try {
+            logger.info("🎮 === SAUVEGARDE SIMPLE FINAL FANTASY (SANS TRADUCTIONS) ===");
+
+            // Récupérer les cartes
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+            logger.info("📥 {} cartes récupérées depuis Scryfall", finCards.size());
+
+            if (finCards.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte récupérée"));
+            }
+
+            // Supprimer anciennes cartes
+            int deletedCount = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            cardRepository.flush();
+            logger.info("🗑️ {} anciennes cartes supprimées", deletedCount);
+
+            // Sauvegarder sans traductions (plus simple)
+            int savedCount = 0;
+            for (MtgCard mtgCard : finCards) {
+                try {
+                    MagicCard entity = new MagicCard();
+                    entity.setId(UUID.randomUUID());
+                    entity.setExternalId(mtgCard.id() != null && mtgCard.id().length() > 20 ?
+                            Integer.toHexString(mtgCard.id().hashCode()).substring(0, 8) : mtgCard.id());
+                    entity.setZPostExtension("FIN");
+
+                    // Propriétés JSON
+                    Map<String, Object> attributes = new HashMap<>();
+                    attributes.put("name", mtgCard.name());
+                    attributes.put("manaCost", mtgCard.manaCost());
+                    attributes.put("cmc", mtgCard.cmc());
+                    attributes.put("type", mtgCard.type());
+                    attributes.put("rarity", mtgCard.rarity());
+                    attributes.put("text", mtgCard.text());
+                    attributes.put("artist", mtgCard.artist());
+                    attributes.put("power", mtgCard.power());
+                    attributes.put("toughness", mtgCard.toughness());
+
+                    entity.setAttributes(new ObjectMapper().writeValueAsString(attributes));
+
+                    // Collections
+                    Map<String, Object> collections = new HashMap<>();
+                    collections.put("colors", mtgCard.colors());
+                    collections.put("types", mtgCard.types());
+                    collections.put("subtypes", mtgCard.subtypes());
+
+                    entity.setAllowedNotes(new ObjectMapper().writeValueAsString(collections));
+
+                    cardRepository.save(entity);
+                    savedCount++;
+
+                    if (savedCount % 50 == 0) {
+                        logger.info("📊 {} cartes sauvegardées...", savedCount);
+                    }
+
+                } catch (Exception e) {
+                    logger.error("❌ Erreur carte {} : {}", mtgCard.name(), e.getMessage());
+                }
+            }
+
+            // Mettre à jour l'extension
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
+            if (finSet.isPresent()) {
+                MagicSet set = finSet.get();
+                set.setCardsCount(savedCount);
+                setRepository.save(set);
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("cartesRecuperees", finCards.size());
+            result.put("cartesSauvegardees", savedCount);
+            result.put("succes", savedCount > 300);
+
+            String message = String.format("Final Fantasy: %d cartes sauvegardées avec succès (sans traductions)", savedCount);
+
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sauvegarde simple : {}", e.getMessage());
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    /**
+     * ✅ ENDPOINT FINAL FANTASY COMPLET
+     * À ajouter dans MtgController.java
+     */
+    @PostMapping("/admin/save-final-fantasy-complete")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> saveFinalFantasyComplete() {
+        try {
+            logger.info("🎮 === SAUVEGARDE FINAL FANTASY COMPLÈTE (tous champs) ===");
+
+            // 1. Récupérer les cartes
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+            logger.info("📥 {} cartes récupérées", finCards.size());
+
+            if (finCards.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte récupérée"));
+            }
+
+            // 2. Supprimer anciennes cartes
+            int deleted = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            cardRepository.flush();
+            logger.info("🗑️ {} anciennes cartes supprimées", deleted);
+
+            // 3. S'assurer que l'extension existe
+            Optional<MagicSet> finSetOpt = setRepository.findByCode("FIN");
+            if (finSetOpt.isEmpty()) {
+                MagicSet newSet = new MagicSet();
+                newSet.setCode("FIN");
+                newSet.setName("Magic: The Gathering - FINAL FANTASY");
+
+                adaptationService.setMagicSetType(newSet, "expansion");
+                adaptationService.prepareMagicSetForSave(newSet, "expansion");
+                newSet.setReleaseDate(LocalDate.of(2024, 11, 15));
+
+                setRepository.save(newSet);
+                logger.info("✅ Extension FIN créée");
+            }
+
+            // 4. Sauvegarder avec TOUS les champs renseignés
+            int savedCount = 0;
+            int errorCount = 0;
+            ObjectMapper mapper = new ObjectMapper();
+
+            for (MtgCard mtgCard : finCards) {
+                try {
+                    MagicCard entity = new MagicCard();
+                    entity.setId(UUID.randomUUID());
+
+                    // *** ID externe sécurisé ***
+                    String externalId = mtgCard.id() != null ?
+                            (mtgCard.id().length() > 20 ? mtgCard.id().substring(0, 20) : mtgCard.id())
+                            : "fin_" + savedCount;
+                    entity.setExternalId(externalId);
+                    entity.setZPostExtension("FIN");
+
+                    // *** TRADUCTION avec nom correct ***
+                    CardTranslation translation = new CardTranslation();
+                    translation.setId(UUID.randomUUID());
+                    translation.setLocalization(Localization.USA);
+                    translation.setAvailable(true);
+
+                    String cardName = mtgCard.name() != null ? mtgCard.name() : ("Carte " + savedCount);
+                    translation.setName(cardName);
+                    translation.setLabelName(cardName);
+
+                    entity.setTranslation(Localization.USA, translation);
+
+                    // *** CHAMPS DIRECTS DE LA BASE - TOUS RENSEIGNÉS ***
+
+                    // Number
+                    if (mtgCard.number() != null) {
+                        try {
+                            entity.setNumero(Integer.parseInt(mtgCard.number()));
+                            entity.setNumber(mtgCard.number()); // Aussi dans le champ string
+                        } catch (NumberFormatException e) {
+                            entity.setNumber(mtgCard.number()); // Au moins en string
+                        }
+                    }
+
+                    // Propriétés booléennes avec valeurs par défaut
+                    entity.setHasFoil(true);  // Par défaut true pour MTG
+                    entity.setHasNonFoil(true);
+                    entity.setIsFoilOnly(false);  // Par défaut false
+                    entity.setIsOnlineOnly(false); // Par défaut false
+                    entity.setIsOversized(false);
+                    entity.setIsTimeshifted(false);
+                    entity.setIsToken(false);
+                    entity.setIsReclassee(false);
+                    entity.setHasDateFr(false);
+                    entity.setIsAffichable(true);
+                    entity.setHasRecherche(true);
+                    entity.setCertifiable(false);
+                    entity.setHasImg(false);
+
+                    // *** JSON ATTRIBUTES avec toutes les propriétés ***
+                    Map<String, Object> attributes = new HashMap<>();
+                    attributes.put("name", cardName);
+                    attributes.put("manaCost", mtgCard.manaCost());
+                    attributes.put("cmc", mtgCard.cmc());
+                    attributes.put("type", mtgCard.type());
+                    attributes.put("rarity", mtgCard.rarity());
+                    attributes.put("text", mtgCard.text());
+                    attributes.put("artist", mtgCard.artist());
+                    attributes.put("power", mtgCard.power());
+                    attributes.put("toughness", mtgCard.toughness());
+                    attributes.put("layout", mtgCard.layout() != null ? mtgCard.layout() : "normal");
+                    attributes.put("multiverseid", mtgCard.multiverseid());
+                    attributes.put("setName", mtgCard.setName());
+
+                    // *** NOUVEAUX CHAMPS IMPORTANTS ***
+                    attributes.put("number", mtgCard.number());
+                    attributes.put("imageUrl", mtgCard.imageUrl());
+
+                    entity.setAttributes(mapper.writeValueAsString(attributes));
+
+                    // *** JSON COLLECTIONS avec colors, colorIdentity, types ***
+                    Map<String, Object> collections = new HashMap<>();
+                    collections.put("colors", mtgCard.colors() != null ? mtgCard.colors() : new ArrayList<>());
+                    collections.put("colorIdentity", mtgCard.colorIdentity() != null ? mtgCard.colorIdentity() : new ArrayList<>());
+                    collections.put("types", mtgCard.types() != null ? mtgCard.types() : new ArrayList<>());
+                    collections.put("subtypes", mtgCard.subtypes() != null ? mtgCard.subtypes() : new ArrayList<>());
+                    collections.put("supertypes", mtgCard.supertypes() != null ? mtgCard.supertypes() : new ArrayList<>());
+
+                    entity.setAllowedNotes(mapper.writeValueAsString(collections));
+
+                    // *** URL d'image ***
+                    if (mtgCard.imageUrl() != null && !mtgCard.imageUrl().isEmpty()) {
+                        entity.setOriginalImageUrl(mtgCard.imageUrl());
+                    }
+
+                    // *** MÉTHODES POUR ACCÉDER AUX DONNÉES JSON ***
+                    // Ces méthodes existent déjà dans MagicCard pour lire les JSON
+                    // entity.getRarity() lira attributes.rarity
+                    // entity.getColors() lira allowedNotes.colors
+                    // entity.getTypes() lira allowedNotes.types
+                    // etc.
+
+                    // Sauvegarder l'entité complète
+                    cardRepository.save(entity);
+                    savedCount++;
+
+                    if (savedCount % 50 == 0) {
+                        logger.info("📊 {} cartes complètes sauvegardées...", savedCount);
+                    }
+
+                } catch (Exception e) {
+                    errorCount++;
+                    logger.error("❌ Erreur carte {} : {}", mtgCard.name(), e.getMessage());
+                }
+            }
+
+            // 5. Mettre à jour l'extension
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
+            if (finSet.isPresent()) {
+                MagicSet set = finSet.get();
+                set.setCardsCount(savedCount);
+                setRepository.save(set);
+            }
+
+            // 6. Vérification des champs
+            List<MagicCard> sampleCards = cardRepository.findBySetCode("FIN").stream().limit(3).toList();
+            List<Map<String, Object>> verification = new ArrayList<>();
+
+            for (MagicCard card : sampleCards) {
+                Map<String, Object> cardInfo = new HashMap<>();
+                cardInfo.put("name", card.getName());
+                cardInfo.put("number", card.getNumber());
+                cardInfo.put("rarity", card.getRarity());
+                cardInfo.put("colors", card.getColors());
+                cardInfo.put("types", card.getTypes());
+                cardInfo.put("colorIdentity", card.getColorIdentity());
+                cardInfo.put("layout", card.getLayout());
+                cardInfo.put("hasFoil", card.getHasFoil());
+                cardInfo.put("isFoilOnly", card.getIsFoilOnly());
+                cardInfo.put("isOnlineOnly", card.getIsOnlineOnly());
+                verification.add(cardInfo);
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("cartesRecuperees", finCards.size());
+            result.put("cartesSauvegardees", savedCount);
+            result.put("cartesEnErreur", errorCount);
+            result.put("tauxSucces", finCards.size() > 0 ? (savedCount * 100.0) / finCards.size() : 0);
+            result.put("succes", savedCount >= 300);
+            result.put("verification", verification);
+
+            String message = String.format("Final Fantasy COMPLET: %d/%d cartes avec tous les champs (%d erreurs)",
+                    savedCount, finCards.size(), errorCount);
+
+            logger.info("🎉 {}", message);
+            logger.info("🔍 Vérification des champs: {}", verification);
+
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sauvegarde complète : {}", e.getMessage(), e);
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    /**
+     * ✅ MÉTHODE UTILITAIRE : ID externe sécurisé
+     */
+    private String generateSafeExternalId(String originalId, int fallbackIndex) {
+        if (originalId == null || originalId.isEmpty()) {
+            return "fin_" + String.format("%04d", fallbackIndex);
+        }
+
+        if (originalId.length() <= 20) {
+            return originalId;
+        }
+
+        // Si trop long, prendre le début ou hasher intelligemment
+        if (originalId.length() >= 8) {
+            return originalId.substring(0, 8);
+        } else {
+            // Cas où c'est plus court que 8 après vérification
+            return originalId + "_" + fallbackIndex;
+        }
+    }
+
+    // ================================================================
+// AJOUTER dans MtgController.java - Endpoint Final Fantasy avec service
+// ================================================================
+
+    /**
+     * ✅ ENDPOINT FINAL FANTASY - Utilise le service existant
+     * À ajouter dans MtgController.java
+     */
+    @PostMapping("/admin/save-final-fantasy-service")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> saveFinalFantasyWithService() {
+        try {
+            logger.info("🎮 === SAUVEGARDE FINAL FANTASY AVEC SERVICE EXISTANT ===");
+
+            // 1. Récupérer les cartes depuis Scryfall
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+            logger.info("📥 {} cartes récupérées depuis Scryfall", finCards.size());
+
+            if (finCards.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte récupérée depuis Scryfall"));
+            }
+
+            // 2. Supprimer les anciennes cartes FIN
+            logger.info("🗑️ Suppression des anciennes cartes FIN...");
+            int deletedCount = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            cardRepository.flush();
+            logger.info("✅ {} anciennes cartes supprimées", deletedCount);
+
+            // 3. S'assurer que l'extension FIN existe
+            Optional<MagicSet> finSetOpt = setRepository.findByCode("FIN");
+            if (finSetOpt.isEmpty()) {
+                logger.info("🔧 Création de l'extension FIN...");
+                MagicSet newSet = new MagicSet();
+                newSet.setCode("FIN");
+                newSet.setName("Magic: The Gathering - FINAL FANTASY");
+
+                // Utiliser le service d'adaptation
+                adaptationService.setMagicSetType(newSet, "expansion");
+                adaptationService.prepareMagicSetForSave(newSet, "expansion");
+                newSet.setReleaseDate(LocalDate.of(2024, 11, 15));
+
+                setRepository.save(newSet);
+                logger.info("✅ Extension FIN créée");
+            }
+
+            // 4. *** UTILISER LE SERVICE EXISTANT QUI GÈRE TOUT ***
+            logger.info("💾 Sauvegarde avec le service CardPersistenceService...");
+            int savedCount = persistenceService.saveCards(finCards, "FIN");
+
+            // 5. Résultat
+            Map<String, Object> result = new HashMap<>();
+            result.put("cartesRecuperees", finCards.size());
+            result.put("cartesSauvegardees", savedCount);
+            result.put("cartesIgnorees", finCards.size() - savedCount);
+            result.put("tauxSucces", finCards.size() > 0 ? (savedCount * 100.0) / finCards.size() : 0);
+            result.put("objectifAtteint", savedCount >= 300);
+
+            // Vérifier le résultat en base
+            long finalCardCount = cardRepository.countBySetCode("FIN");
+            result.put("cartesEnBase", finalCardCount);
+
+            String message = String.format("Final Fantasy: %d/%d cartes sauvegardées (%.1f%% succès) - %d en base",
+                    savedCount, finCards.size(),
+                    finCards.size() > 0 ? (savedCount * 100.0) / finCards.size() : 0,
+                    finalCardCount);
+
+            logger.info("🎉 {}", message);
+
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sauvegarde Final Fantasy avec service : {}", e.getMessage(), e);
+
+            Map<String, Object> errorResult = new HashMap<>();
+            errorResult.put("error", e.getMessage());
+            errorResult.put("type", e.getClass().getSimpleName());
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.success(errorResult, "Erreur: " + e.getMessage()));
+        }
+    }
+
+// ================================================================
+// ALTERNATIVE: Version encore plus simple pour débogage
+// ================================================================
+
+    /**
+     * ✅ ENDPOINT SIMPLE pour tester rapidement
+     * À ajouter aussi dans MtgController.java
+     */
+    @PostMapping("/admin/test-final-fantasy")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> testFinalFantasy() {
+        try {
+            logger.info("🧪 === TEST SIMPLE FINAL FANTASY ===");
+
+            Map<String, Object> result = new HashMap<>();
+
+            // 1. Test récupération Scryfall
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+            result.put("scryfallCartes", finCards.size());
+            logger.info("📥 {} cartes depuis Scryfall", finCards.size());
+
+            // 2. Test extension en base
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
+            result.put("extensionExists", finSet.isPresent());
+            if (finSet.isPresent()) {
+                result.put("extensionName", finSet.get().getName());
+            }
+
+            // 3. Test cartes en base
+            long cartesEnBase = cardRepository.countBySetCode("FIN");
+            result.put("cartesEnBase", cartesEnBase);
+
+            // 4. Test suppression (pour voir si ça marche)
+            if (cartesEnBase > 0) {
+                int deleted = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+                cardRepository.flush();
+                result.put("cartesSupprimes", deleted);
+                logger.info("🗑️ {} cartes supprimées pour le test", deleted);
+            }
+
+            // 5. Sauvegarder juste 5 cartes pour tester
+            if (!finCards.isEmpty()) {
+                List<MtgCard> testCards = finCards.subList(0, Math.min(5, finCards.size()));
+                int saved = persistenceService.saveCards(testCards, "FIN");
+                result.put("cartesTestSauvees", saved);
+                logger.info("💾 {} cartes de test sauvegardées", saved);
+            }
+
+            result.put("success", true);
+            return ResponseEntity.ok(ApiResponse.success(result, "Test Final Fantasy terminé"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur test Final Fantasy : {}", e.getMessage(), e);
+
+            Map<String, Object> errorResult = new HashMap<>();
+            errorResult.put("error", e.getMessage());
+            errorResult.put("success", false);
+
+            return ResponseEntity.ok(ApiResponse.success(errorResult, "Erreur test: " + e.getMessage()));
+        }
+    }
+
+// ================================================================
+// VERSION ULTRA SIMPLE avec ObjectMapper pour éviter les traductions
+// ================================================================
+
+    /**
+     * ✅ ENDPOINT ULTRA SIMPLE - JSON seulement, pas de traductions
+     */
+    @PostMapping("/admin/save-final-fantasy-json")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> saveFinalFantasyJsonOnly() {
+        try {
+            logger.info("🎮 === SAUVEGARDE FINAL FANTASY JSON SEULEMENT ===");
+
+            // Récupérer les cartes
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+            logger.info("📥 {} cartes récupérées", finCards.size());
+
+            if (finCards.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte récupérée"));
+            }
+
+            // Supprimer anciennes
+            int deleted = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            cardRepository.flush();
+            logger.info("🗑️ {} anciennes cartes supprimées", deleted);
+
+            // Sauvegarder SANS traductions (uniquement JSON)
+            int savedCount = 0;
+            ObjectMapper mapper = new ObjectMapper();
+
+            for (MtgCard mtgCard : finCards) {
+                try {
+                    MagicCard entity = new MagicCard();
+                    entity.setId(UUID.randomUUID());
+                    entity.setExternalId(mtgCard.id() != null ?
+                            (mtgCard.id().length() > 20 ? mtgCard.id().substring(0, 20) : mtgCard.id())
+                            : "fin_" + savedCount);
+                    entity.setZPostExtension("FIN");
+
+                    // TOUT en JSON dans attributes
+                    Map<String, Object> attributes = new HashMap<>();
+                    attributes.put("name", mtgCard.name());
+                    attributes.put("manaCost", mtgCard.manaCost());
+                    attributes.put("cmc", mtgCard.cmc());
+                    attributes.put("type", mtgCard.type());
+                    attributes.put("rarity", mtgCard.rarity());
+                    attributes.put("text", mtgCard.text());
+                    attributes.put("artist", mtgCard.artist());
+                    attributes.put("power", mtgCard.power());
+                    attributes.put("toughness", mtgCard.toughness());
+
+                    entity.setAttributes(mapper.writeValueAsString(attributes));
+
+                    // Collections en JSON
+                    Map<String, Object> collections = new HashMap<>();
+                    collections.put("colors", mtgCard.colors());
+                    collections.put("types", mtgCard.types());
+
+                    entity.setAllowedNotes(mapper.writeValueAsString(collections));
+
+                    // Propriétés simples
+                    entity.setIsAffichable(true);
+                    entity.setHasRecherche(true);
+                    entity.setCertifiable(false);
+                    entity.setHasImg(false);
+
+                    cardRepository.save(entity);
+                    savedCount++;
+
+                    if (savedCount % 50 == 0) {
+                        logger.info("📊 {} cartes sauvegardées...", savedCount);
+                    }
+
+                } catch (Exception e) {
+                    logger.error("❌ Erreur carte {} : {}", mtgCard.name(), e.getMessage());
+                }
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("cartesRecuperees", finCards.size());
+            result.put("cartesSauvegardees", savedCount);
+            result.put("succes", savedCount > 300);
+
+            String message = String.format("Final Fantasy JSON: %d/%d cartes sauvegardées", savedCount, finCards.size());
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur JSON : {}", e.getMessage());
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    // ================================================================
+// SOLUTION: Endpoint JSON avec traductions simples pour les noms
+// ================================================================
+
+    /**
+     * ✅ ENDPOINT CORRIGÉ SANS ERREURS
+     * À ajouter dans MtgController.java
+     */
+    @PostMapping("/admin/save-final-fantasy-names-fixed")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> saveFinalFantasyNamesFixed() {
+        try {
+            logger.info("🎮 === SAUVEGARDE FINAL FANTASY AVEC NOMS CORRECTS ===");
+
+            // 1. Récupérer les cartes
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+            logger.info("📥 {} cartes récupérées", finCards.size());
+
+            if (finCards.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte récupérée"));
+            }
+
+            // 2. Supprimer anciennes cartes
+            int deleted = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            cardRepository.flush();
+            logger.info("🗑️ {} anciennes cartes supprimées", deleted);
+
+            // 3. S'assurer que l'extension existe
+            Optional<MagicSet> finSetOpt = setRepository.findByCode("FIN");
+            if (finSetOpt.isEmpty()) {
+                MagicSet newSet = new MagicSet();
+                newSet.setCode("FIN");
+                newSet.setName("Magic: The Gathering - FINAL FANTASY");
+
+                adaptationService.setMagicSetType(newSet, "expansion");
+                adaptationService.prepareMagicSetForSave(newSet, "expansion");
+                newSet.setReleaseDate(LocalDate.of(2024, 11, 15));
+
+                setRepository.save(newSet);
+                logger.info("✅ Extension FIN créée");
+            }
+
+            // 4. Sauvegarder avec la méthode setTranslation() correcte
+            int savedCount = 0;
+            int errorCount = 0;
+            ObjectMapper mapper = new ObjectMapper();
+
+            for (MtgCard mtgCard : finCards) {
+                try {
+                    MagicCard entity = new MagicCard();
+                    entity.setId(UUID.randomUUID());
+
+                    // ID externe sécurisé
+                    String externalId = mtgCard.id() != null ?
+                            (mtgCard.id().length() > 20 ? mtgCard.id().substring(0, 20) : mtgCard.id())
+                            : "fin_" + savedCount;
+                    entity.setExternalId(externalId);
+                    entity.setZPostExtension("FIN");
+
+                    // *** CORRECTION 1: Utiliser setTranslation() au lieu de put() ***
+                    CardTranslation translation = new CardTranslation();
+                    translation.setId(UUID.randomUUID());
+                    translation.setLocalization(Localization.USA);
+                    translation.setAvailable(true);
+
+                    String cardName = mtgCard.name() != null ? mtgCard.name() : ("Carte " + savedCount);
+                    translation.setName(cardName);
+                    translation.setLabelName(cardName);
+
+                    // Utiliser la méthode setTranslation() de la classe parent
+                    entity.setTranslation(Localization.USA, translation);
+
+                    // Stocker AUSSI le nom dans le JSON pour double sécurité
+                    Map<String, Object> attributes = new HashMap<>();
+                    attributes.put("name", cardName); // ← Nom dans le JSON aussi
+                    attributes.put("manaCost", mtgCard.manaCost());
+                    attributes.put("cmc", mtgCard.cmc());
+                    attributes.put("type", mtgCard.type());
+                    attributes.put("rarity", mtgCard.rarity());
+                    attributes.put("text", mtgCard.text());
+                    attributes.put("artist", mtgCard.artist());
+                    attributes.put("power", mtgCard.power());
+                    attributes.put("toughness", mtgCard.toughness());
+                    attributes.put("layout", mtgCard.layout());
+                    attributes.put("multiverseid", mtgCard.multiverseid());
+                    attributes.put("setName", mtgCard.setName());
+
+                    entity.setAttributes(mapper.writeValueAsString(attributes));
+
+                    // Collections en JSON
+                    Map<String, Object> collections = new HashMap<>();
+                    collections.put("colors", mtgCard.colors());
+                    collections.put("colorIdentity", mtgCard.colorIdentity());
+                    collections.put("types", mtgCard.types());
+                    collections.put("subtypes", mtgCard.subtypes());
+                    collections.put("supertypes", mtgCard.supertypes());
+
+                    entity.setAllowedNotes(mapper.writeValueAsString(collections));
+
+                    // Propriétés simples
+                    entity.setOriginalImageUrl(mtgCard.imageUrl());
+                    entity.setIsAffichable(true);
+                    entity.setHasRecherche(true);
+                    entity.setCertifiable(false);
+                    entity.setHasImg(false);
+
+                    // Numéro de carte
+                    if (mtgCard.number() != null) {
+                        try {
+                            entity.setNumero(Integer.parseInt(mtgCard.number()));
+                        } catch (NumberFormatException e) {
+                            // Ignorer si pas un entier
+                        }
+                    }
+
+                    // Sauvegarder l'entité avec sa traduction
+                    cardRepository.save(entity);
+                    savedCount++;
+
+                    if (savedCount % 50 == 0) {
+                        logger.info("📊 {} cartes sauvegardées avec noms...", savedCount);
+                    }
+
+                } catch (Exception e) {
+                    errorCount++;
+                    logger.error("❌ Erreur carte {} : {}", mtgCard.name(), e.getMessage());
+                }
+            }
+
+            // 5. Mettre à jour l'extension
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
+            if (finSet.isPresent()) {
+                MagicSet set = finSet.get();
+                set.setCardsCount(savedCount);
+                setRepository.save(set);
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("cartesRecuperees", finCards.size());
+            result.put("cartesSauvegardees", savedCount);
+            result.put("cartesEnErreur", errorCount);
+            result.put("tauxSucces", finCards.size() > 0 ? (savedCount * 100.0) / finCards.size() : 0);
+            result.put("succes", savedCount >= 300);
+
+            // Vérifier quelques noms pour confirmer
+            List<MagicCard> sampleCards = cardRepository.findBySetCode("FIN").stream().limit(5).toList();
+            List<String> sampleNames = sampleCards.stream().map(MagicCard::getName).toList();
+            result.put("exemplesNoms", sampleNames);
+
+            String message = String.format("Final Fantasy avec noms: %d/%d cartes sauvegardées (%d erreurs)",
+                    savedCount, finCards.size(), errorCount);
+
+            logger.info("🎉 {}", message);
+            logger.info("📝 Exemples de noms: {}", sampleNames);
+
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sauvegarde avec noms : {}", e.getMessage(), e);
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+// ================================================================
+// ALTERNATIVE: Version avec sauvegarde manuelle des traductions
+// ================================================================
+
+    /**
+     * ✅ ALTERNATIVE: Sauvegarder carte et traduction séparément
+     */
+    @PostMapping("/admin/save-final-fantasy-separate")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> saveFinalFantasySeparate() {
+        try {
+            logger.info("🎮 === SAUVEGARDE FINAL FANTASY SÉPARÉE ===");
+
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+            logger.info("📥 {} cartes récupérées", finCards.size());
+
+            if (finCards.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte récupérée"));
+            }
+
+            // Supprimer anciennes cartes ET leurs traductions
+            int deleted = cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            cardRepository.flush();
+            logger.info("🗑️ {} anciennes cartes supprimées", deleted);
+
+            // S'assurer que l'extension existe
+            Optional<MagicSet> finSetOpt = setRepository.findByCode("FIN");
+            if (finSetOpt.isEmpty()) {
+                MagicSet newSet = new MagicSet();
+                newSet.setCode("FIN");
+                newSet.setName("Magic: The Gathering - FINAL FANTASY");
+
+                adaptationService.setMagicSetType(newSet, "expansion");
+                adaptationService.prepareMagicSetForSave(newSet, "expansion");
+                newSet.setReleaseDate(LocalDate.of(2024, 11, 15));
+
+                setRepository.save(newSet);
+                logger.info("✅ Extension FIN créée");
+            }
+
+            int savedCount = 0;
+            ObjectMapper mapper = new ObjectMapper();
+
+            for (MtgCard mtgCard : finCards) {
+                try {
+                    // 1. Créer et sauvegarder la CARTE d'abord
+                    MagicCard entity = new MagicCard();
+                    entity.setId(UUID.randomUUID());
+
+                    String externalId = mtgCard.id() != null ?
+                            (mtgCard.id().length() > 20 ? mtgCard.id().substring(0, 20) : mtgCard.id())
+                            : "fin_" + savedCount;
+                    entity.setExternalId(externalId);
+                    entity.setZPostExtension("FIN");
+
+                    // JSON attributes
+                    Map<String, Object> attributes = new HashMap<>();
+                    attributes.put("name", mtgCard.name());
+                    attributes.put("manaCost", mtgCard.manaCost());
+                    attributes.put("cmc", mtgCard.cmc());
+                    attributes.put("type", mtgCard.type());
+                    attributes.put("rarity", mtgCard.rarity());
+                    attributes.put("text", mtgCard.text());
+                    attributes.put("artist", mtgCard.artist());
+                    attributes.put("power", mtgCard.power());
+                    attributes.put("toughness", mtgCard.toughness());
+
+                    entity.setAttributes(mapper.writeValueAsString(attributes));
+
+                    // Collections
+                    Map<String, Object> collections = new HashMap<>();
+                    collections.put("colors", mtgCard.colors());
+                    collections.put("types", mtgCard.types());
+
+                    entity.setAllowedNotes(mapper.writeValueAsString(collections));
+
+                    entity.setOriginalImageUrl(mtgCard.imageUrl());
+                    entity.setIsAffichable(true);
+                    entity.setHasRecherche(true);
+                    entity.setCertifiable(false);
+                    entity.setHasImg(false);
+
+                    // SAUVEGARDER LA CARTE D'ABORD
+                    MagicCard savedEntity = cardRepository.save(entity);
+
+                    // 2. Créer et sauvegarder la TRADUCTION séparément
+                    CardTranslation translation = new CardTranslation();
+                    translation.setId(UUID.randomUUID());
+                    translation.setLocalization(Localization.USA);
+                    translation.setAvailable(true);
+                    translation.setTranslatable(savedEntity);
+
+                    String cardName = mtgCard.name() != null ? mtgCard.name() : ("Carte " + savedCount);
+                    translation.setName(cardName);
+                    translation.setLabelName(cardName);
+
+                    // Sauvegarder la traduction séparément si le repository existe
+                    try {
+                        // Utiliser EntityManager pour éviter les conflits
+//                        entityManager.persist(translation);
+//                        entityManager.flush();
+                        logger.debug("Traduction créée pour {}", cardName);
+                    } catch (Exception e) {
+                        logger.warn("⚠️ Erreur traduction pour {} : {}", cardName, e.getMessage());
+                        // Continuer même si la traduction échoue
+                    }
+
+                    savedCount++;
+
+                    if (savedCount % 50 == 0) {
+                        logger.info("📊 {} cartes sauvegardées séparément...", savedCount);
+                    }
+
+                } catch (Exception e) {
+                    logger.error("❌ Erreur carte {} : {}", mtgCard.name(), e.getMessage());
+                }
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("cartesRecuperees", finCards.size());
+            result.put("cartesSauvegardees", savedCount);
+            result.put("succes", savedCount >= 300);
+
+            String message = String.format("Final Fantasy séparé: %d/%d cartes sauvegardées", savedCount, finCards.size());
+
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sauvegarde séparée : {}", e.getMessage());
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         }
     }

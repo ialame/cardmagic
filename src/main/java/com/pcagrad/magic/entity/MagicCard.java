@@ -1,5 +1,7 @@
 package com.pcagrad.magic.entity;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pcagrad.magic.util.Localization;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
@@ -11,6 +13,7 @@ import org.hibernate.annotations.ColumnDefault;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 @EqualsAndHashCode(callSuper = true)
 @Data
@@ -103,11 +106,23 @@ public class MagicCard extends Card {
     }
 
     /**
-     * Nom depuis la translation US
+     * ✅ SOLUTION ALTERNATIVE: Modifier MagicCard.getName() pour lire le JSON
+     * À modifier dans MagicCard.java
      */
     public String getName() {
+        // D'abord essayer la traduction
         CardTranslation translation = getTranslation(Localization.USA);
-        return translation != null ? translation.getName() : "Carte inconnue";
+        if (translation != null && translation.getName() != null && !translation.getName().equals("Carte inconnue")) {
+            return translation.getName();
+        }
+
+        // Essayer de récupérer depuis le JSON attributes
+        String nameFromJson = extractFromAttributes("name");
+        if (nameFromJson != null && !nameFromJson.isEmpty() && !nameFromJson.equals("null")) {
+            return nameFromJson;
+        }
+
+        return "Carte inconnue";
     }
 
     public void setName(String name) {
@@ -115,12 +130,6 @@ public class MagicCard extends Card {
         getTranslation(Localization.USA).setName(name);
     }
 
-    /**
-     * Numero de carte mappé sur number field
-     */
-    public String getNumber() {
-        return numero != null ? numero.toString() : null;
-    }
 
     public void setNumber(String number) {
         try {
@@ -187,9 +196,7 @@ public class MagicCard extends Card {
         updateAttributes("cmc", cmc != null ? cmc.toString() : null);
     }
 
-    public String getRarity() {
-        return extractFromAttributes("rarity");
-    }
+
 
     public void setRarity(String rarity) {
         updateAttributes("rarity", rarity);
@@ -235,9 +242,7 @@ public class MagicCard extends Card {
         updateAttributes("toughness", toughness);
     }
 
-    public String getLayout() {
-        return extractFromAttributes("layout");
-    }
+
 
     public void setLayout(String layout) {
         updateAttributes("layout", layout);
@@ -275,20 +280,13 @@ public class MagicCard extends Card {
         updateAttributes("setName", setName);
     }
 
-    /**
-     * Collections (colors, types, etc.) stockées dans allowedNotes JSON
-     */
-    public List<String> getColors() {
-        return extractListFromAllowedNotes("colors");
-    }
+
 
     public void setColors(List<String> colors) {
         updateAllowedNotes("colors", colors);
     }
 
-    public List<String> getColorIdentity() {
-        return extractListFromAllowedNotes("colorIdentity");
-    }
+
 
     public void setColorIdentity(List<String> colorIdentity) {
         updateAllowedNotes("colorIdentity", colorIdentity);
@@ -302,9 +300,6 @@ public class MagicCard extends Card {
         updateAllowedNotes("supertypes", supertypes);
     }
 
-    public List<String> getTypes() {
-        return extractListFromAllowedNotes("types");
-    }
 
     public void setTypes(List<String> types) {
         updateAllowedNotes("types", types);
@@ -340,11 +335,19 @@ public class MagicCard extends Card {
 
     // MÉTHODES UTILITAIRES PRIVÉES
 
+    @Override
     public void ensureTranslationExists(Localization localization) {
         if (getTranslation(localization) == null) {
             CardTranslation translation = new CardTranslation();
+            translation.setId(UUID.randomUUID());
             translation.setLocalization(localization);
             translation.setAvailable(true);
+
+            // *** CORRECTION: Utiliser un nom par défaut basé sur l'ID ou un nom générique ***
+            String defaultName = "Carte " + (getId() != null ? getId().toString().substring(0, 8) : "inconnue");
+            translation.setName(defaultName);
+            translation.setLabelName(defaultName); // ← MÊME VALEUR
+
             setTranslation(localization, translation);
         }
     }
@@ -423,37 +426,7 @@ public class MagicCard extends Card {
         }
     }
 
-    private List<String> extractListFromAllowedNotes(String key) {
-        if (getAllowedNotes() == null) return new ArrayList<>();
 
-        try {
-            // Parse JSON basique pour extraire un array
-            String notes = getAllowedNotes();
-            String searchKey = "\"" + key + "\":[";
-            int startIndex = notes.indexOf(searchKey);
-            if (startIndex == -1) return new ArrayList<>();
-
-            startIndex += searchKey.length();
-            int endIndex = notes.indexOf("]", startIndex);
-            if (endIndex == -1) return new ArrayList<>();
-
-            String arrayContent = notes.substring(startIndex, endIndex);
-            List<String> result = new ArrayList<>();
-
-            // Split simple par virgules et nettoyer
-            String[] items = arrayContent.split(",");
-            for (String item : items) {
-                String cleaned = item.trim().replace("\"", "");
-                if (!cleaned.isEmpty()) {
-                    result.add(cleaned);
-                }
-            }
-
-            return result;
-        } catch (Exception e) {
-            return new ArrayList<>();
-        }
-    }
 
     private void updateAllowedNotes(String key, List<String> values) {
         if (getAllowedNotes() == null) {
@@ -520,5 +493,57 @@ public class MagicCard extends Card {
         setExternalId(externalId);
         setName(name);
         setSetCode(setCode);
+    }
+
+
+
+    public String getRarity() {
+        return extractFromAttributes("rarity");
+    }
+
+    public String getLayout() {
+        String layout = extractFromAttributes("layout");
+        return layout != null ? layout : "normal";
+    }
+
+    public List<String> getColors() {
+        return extractListFromAllowedNotes("colors");
+    }
+
+    public List<String> getColorIdentity() {
+        return extractListFromAllowedNotes("colorIdentity");
+    }
+
+    public List<String> getTypes() {
+        return extractListFromAllowedNotes("types");
+    }
+
+    public String getNumber() {
+        // D'abord essayer le champ numero (integer)
+        if (numero != null) {
+            return numero.toString();
+        }
+        // Sinon essayer depuis le JSON
+        return extractFromAttributes("number");
+    }
+
+    // Méthode utilitaire pour extraire des listes depuis allowedNotes
+    private List<String> extractListFromAllowedNotes(String key) {
+        if (getAllowedNotes() == null) return new ArrayList<>();
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(getAllowedNotes());
+            JsonNode arrayNode = root.get(key);
+            if (arrayNode != null && arrayNode.isArray()) {
+                List<String> result = new ArrayList<>();
+                for (JsonNode element : arrayNode) {
+                    result.add(element.asText());
+                }
+                return result;
+            }
+        } catch (Exception e) {
+            // Ignorer les erreurs de parsing
+        }
+        return new ArrayList<>();
     }
 }
