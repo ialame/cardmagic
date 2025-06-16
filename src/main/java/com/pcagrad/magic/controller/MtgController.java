@@ -1,5 +1,6 @@
 package com.pcagrad.magic.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pcagrad.magic.dto.ApiResponse;
 import com.pcagrad.magic.entity.MagicCard;
 import com.pcagrad.magic.entity.MagicSet;
@@ -535,4 +536,345 @@ public class MtgController {
                     .body(ApiResponse.error("Erreur : " + e.getMessage()));
         }
     }
+
+    // À ajouter dans votre MtgController.java existant
+
+// ========== ENDPOINT POUR CRÉER DES EXTENSIONS FUTURES ==========
+
+    /**
+     * Crée une nouvelle extension avec tous les paramètres nécessaires
+     */
+    @PostMapping("/admin/create-extension")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> createExtension(@RequestBody CreateExtensionRequest request) {
+        try {
+            logger.info("🆕 Création de l'extension : {} - {}", request.getCode(), request.getName());
+
+            // Vérifier si l'extension existe déjà
+            Optional<MagicSet> existing = setRepository.findByCode(request.getCode());
+            if (existing.isPresent()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("L'extension '" + request.getCode() + "' existe déjà"));
+            }
+
+            // Créer la nouvelle extension
+            MagicSet newSet = new MagicSet();
+            newSet.setCode(request.getCode());
+            newSet.setName(request.getName());
+            newSet.setReleaseDate(request.getReleaseDate() != null ? request.getReleaseDate() : LocalDate.now());
+
+            // Assigner le type (par défaut "expansion")
+            String type = request.getType() != null ? request.getType() : "expansion";
+            adaptationService.setMagicSetType(newSet, type);
+            adaptationService.prepareMagicSetForSave(newSet, type);
+
+            // Sauvegarder
+            MagicSet savedSet = setRepository.save(newSet);
+
+            // Préparer la réponse
+            Map<String, Object> result = new HashMap<>();
+            result.put("created", true);
+            result.put("code", savedSet.getCode());
+            result.put("name", savedSet.getName());
+            result.put("type", savedSet.getType());
+            result.put("releaseDate", savedSet.getReleaseDate());
+            result.put("id", savedSet.getId());
+
+            String message = String.format("Extension '%s - %s' créée avec succès",
+                    savedSet.getCode(), savedSet.getName());
+
+            logger.info("✅ Extension créée : {} - {}", savedSet.getCode(), savedSet.getName());
+
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur lors de la création de l'extension {} : {}", request.getCode(), e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Erreur lors de la création : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Endpoint spécialisé pour créer Final Fantasy rapidement
+     */
+    @PostMapping("/admin/create-final-fantasy")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> createFinalFantasy() {
+        try {
+            logger.info("🎮 Création de Final Fantasy");
+
+            // Vérifier si Final Fantasy existe déjà
+            Optional<MagicSet> existing = setRepository.findByCode("FIN");
+            if (existing.isPresent()) {
+                Map<String, Object> result = new HashMap<>();
+                result.put("created", false);
+                result.put("message", "Final Fantasy existe déjà");
+                result.put("existing", true);
+                return ResponseEntity.ok(ApiResponse.success(result, "Final Fantasy déjà présent"));
+            }
+
+            // Créer Final Fantasy avec les bonnes données
+            CreateExtensionRequest request = new CreateExtensionRequest();
+            request.setCode("FIN");
+            request.setName("Magic: The Gathering - FINAL FANTASY");
+            request.setType("expansion");
+            request.setReleaseDate(LocalDate.of(2025, 6, 13));
+
+            // Utiliser l'endpoint générique
+            return createExtension(request);
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur lors de la création de Final Fantasy : {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Erreur lors de la création de Final Fantasy : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Endpoint pour lister les extensions créées récemment
+     */
+    @GetMapping("/admin/recent-extensions")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getRecentExtensions() {
+        try {
+            List<MagicSet> recentSets = setRepository.findAll()
+                    .stream()
+                    .filter(set -> set.getReleaseDate() != null)
+                    .sorted((a, b) -> b.getReleaseDate().compareTo(a.getReleaseDate()))
+                    .limit(10)
+                    .collect(Collectors.toList());
+
+            List<Map<String, Object>> result = recentSets.stream()
+                    .map(set -> {
+                        Map<String, Object> setInfo = new HashMap<>();
+                        setInfo.put("code", set.getCode());
+                        setInfo.put("name", set.getName());
+                        setInfo.put("type", set.getType());
+                        setInfo.put("releaseDate", set.getReleaseDate());
+                        setInfo.put("cardsCount", cardRepository.countBySetCode(set.getCode()));
+                        return setInfo;
+                    })
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(ApiResponse.success(result, "Extensions récentes récupérées"));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur lors de la récupération des extensions récentes : {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Erreur lors de la récupération : " + e.getMessage()));
+        }
+    }
+
+// ========== CLASSE REQUEST POUR CRÉER DES EXTENSIONS ==========
+
+    /**
+     * Classe pour les requêtes de création d'extension
+     */
+    public static class CreateExtensionRequest {
+        private String code;
+        private String name;
+        private String type;
+        private LocalDate releaseDate;
+
+        // Constructeurs
+        public CreateExtensionRequest() {}
+
+        public CreateExtensionRequest(String code, String name) {
+            this.code = code;
+            this.name = name;
+            this.type = "expansion";
+            this.releaseDate = LocalDate.now();
+        }
+
+        // Getters et Setters
+        public String getCode() { return code; }
+        public void setCode(String code) { this.code = code; }
+
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+
+        public LocalDate getReleaseDate() { return releaseDate; }
+        public void setReleaseDate(LocalDate releaseDate) { this.releaseDate = releaseDate; }
+    }
+
+// ========== EXTENSIONS FUTURES PRÉDÉFINIES ==========
+
+    /**
+     * Endpoint pour créer des extensions futures prédéfinies
+     */
+    @PostMapping("/admin/create-future-extension/{setCode}")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> createFutureExtension(@PathVariable String setCode) {
+        try {
+            CreateExtensionRequest request = getFutureExtensionData(setCode);
+            if (request == null) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Extension future '" + setCode + "' non reconnue"));
+            }
+
+            return createExtension(request);
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur lors de la création de l'extension future {} : {}", setCode, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Erreur lors de la création : " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Données prédéfinies pour les extensions futures
+     */
+    private CreateExtensionRequest getFutureExtensionData(String setCode) {
+        Map<String, CreateExtensionRequest> futureExtensions = new HashMap<>();
+
+        // Final Fantasy
+        futureExtensions.put("FIN", new CreateExtensionRequest("FIN", "Magic: The Gathering - FINAL FANTASY"));
+
+        // Extensions futures 2025 (à adapter selon vos besoins)
+        futureExtensions.put("OTH", new CreateExtensionRequest("OTH", "Aetherdrift"));
+        futureExtensions.put("TBD", new CreateExtensionRequest("TBD", "Tarkir Dragonstorm"));
+
+        return futureExtensions.get(setCode.toUpperCase());
+    }
+
+    @PostMapping("/admin/save-cards-final-fantasy")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> saveCardsFinalFantasy() {
+        try {
+            logger.info("💾 Sauvegarde directe des cartes Final Fantasy");
+
+            // Récupérer les cartes depuis Scryfall
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+
+            if (finCards.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte Final Fantasy trouvée sur Scryfall"));
+            }
+
+            // Supprimer les anciennes cartes
+            cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            cardRepository.flush();
+
+            // *** UTILISER VOTRE SERVICE EXISTANT ***
+            int savedCount = persistenceService.saveCards(finCards, "FIN");
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("cartesRecuperees", finCards.size());
+            result.put("cartesSauvegardees", savedCount);
+            result.put("succes", savedCount > 300);
+
+            String message = String.format("Final Fantasy: %d cartes sauvegardées avec succès", savedCount);
+
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sauvegarde Final Fantasy : {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Erreur sauvegarde : " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/admin/sync-fin-simple")
+    @Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> syncFinSimple() {
+        try {
+            logger.info("🎮 Synchronisation Final Fantasy SIMPLE");
+
+            // Récupérer les cartes depuis Scryfall
+            List<MtgCard> finCards = scryfallService.fetchAllCardsFromSet("FIN");
+
+            if (finCards.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Aucune carte trouvée"));
+            }
+
+            // Supprimer TOUTES les cartes FIN existantes
+            cardRepository.deleteBySetCodeIgnoreCase("FIN");
+            cardRepository.flush();
+
+            // Sauvegarder une par une avec une logique simple
+            int savedCount = 0;
+            for (MtgCard mtgCard : finCards) {
+                try {
+                    MagicCard entity = new MagicCard();
+
+                    // *** Pas d'ID externe pour éviter les conflits ***
+                    entity.setZPostExtension("FIN");
+                    // Par celle-ci (gestion des numéros non numériques) :
+                    try {
+                        if (mtgCard.number() != null) {
+                            // Extraire seulement les chiffres du numéro (ex: "99b" → 99)
+                            String numberStr = mtgCard.number().replaceAll("[^0-9]", "");
+                            if (!numberStr.isEmpty()) {
+                                entity.setNumero(Integer.parseInt(numberStr));
+                            }
+                        }
+                    } catch (Exception e) {
+                        // Ignorer les erreurs de parsing de numéro
+                    }
+                    // Champs de base obligatoires
+                    entity.setIsAffichable(true);
+                    entity.setHasRecherche(true);
+                    entity.setCertifiable(false);
+                    entity.setHasImg(false);
+                    entity.setHasDateFr(false);
+
+                    // Attributs JSON avec les données MTG
+                    Map<String, Object> attributes = new HashMap<>();
+                    attributes.put("name", mtgCard.name());
+                    attributes.put("manaCost", mtgCard.manaCost());
+                    attributes.put("type", mtgCard.type());
+                    attributes.put("rarity", mtgCard.rarity());
+                    attributes.put("text", mtgCard.text());
+                    attributes.put("artist", mtgCard.artist());
+                    attributes.put("power", mtgCard.power());
+                    attributes.put("toughness", mtgCard.toughness());
+
+                    entity.setAttributes(new ObjectMapper().writeValueAsString(attributes));
+
+                    // Collections dans allowedNotes
+                    Map<String, Object> collections = new HashMap<>();
+                    collections.put("colors", mtgCard.colors());
+                    collections.put("types", mtgCard.types());
+                    collections.put("subtypes", mtgCard.subtypes());
+
+                    entity.setAllowedNotes(new ObjectMapper().writeValueAsString(collections));
+
+                    cardRepository.save(entity);
+                    savedCount++;
+
+                    if (savedCount % 50 == 0) {
+                        logger.info("📊 {} cartes sauvegardées...", savedCount);
+                    }
+
+                } catch (Exception e) {
+                    logger.error("❌ Erreur carte {} : {}", mtgCard.name(), e.getMessage());
+                }
+            }
+
+            // Mettre à jour l'extension
+            Optional<MagicSet> finSet = setRepository.findByCode("FIN");
+            if (finSet.isPresent()) {
+                MagicSet set = finSet.get();
+                set.setNbCartes(savedCount);
+                setRepository.save(set);
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("cartesRecuperees", finCards.size());
+            result.put("cartesSauvegardees", savedCount);
+            result.put("succes", savedCount > 300);
+
+            String message = String.format("Final Fantasy: %d cartes sauvegardées avec succès (sans traductions)", savedCount);
+
+            return ResponseEntity.ok(ApiResponse.success(result, message));
+
+        } catch (Exception e) {
+            logger.error("❌ Erreur sync simple : {}", e.getMessage());
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
 }

@@ -340,7 +340,7 @@ public class MagicCard extends Card {
 
     // MÉTHODES UTILITAIRES PRIVÉES
 
-    protected void ensureTranslationExists(Localization localization) {
+    public void ensureTranslationExists(Localization localization) {
         if (getTranslation(localization) == null) {
             CardTranslation translation = new CardTranslation();
             translation.setLocalization(localization);

@@ -1,8 +1,10 @@
 package com.pcagrad.magic.service;
 
+import com.pcagrad.magic.entity.CardSetTranslation;
 import com.pcagrad.magic.entity.MagicSet;
 import com.pcagrad.magic.entity.MagicType;
 import com.pcagrad.magic.repository.MagicTypeRepository;
+import com.pcagrad.magic.util.Localization;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -175,6 +177,13 @@ public class EntityAdaptationService {
         // S'assurer qu'il y a au moins une translation
         if (magicSet.getTranslations().isEmpty()) {
             magicSet.ensureTranslationExists(com.pcagrad.magic.util.Localization.USA);
+        }
+
+        // *** NOUVEAU : Vérifier que label_name est défini ***
+        CardSetTranslation usTranslation = magicSet.getTranslation(Localization.USA);
+        if (usTranslation != null && usTranslation.getLabelName() == null) {
+            String name = usTranslation.getName() != null ? usTranslation.getName() : magicSet.getCode();
+            usTranslation.setLabelName(name);
         }
     }
 }

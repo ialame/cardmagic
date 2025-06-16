@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,29 +25,37 @@ import java.time.LocalDate;
 import java.util.Map;
 import java.util.Optional;
 
-@Service
+//@Service
 @Order(1)
+@ConditionalOnProperty(name = "app.startup.enabled", havingValue = "true", matchIfMissing = false)
 public class ApplicationStartupService implements ApplicationRunner {
 
     private static final Logger logger = LoggerFactory.getLogger(ApplicationStartupService.class);
 
-    @Autowired
+    //@Autowired
     private SetRepository setRepository;
 
-    @Autowired
+    //@Autowired
     private CardRepository cardRepository;
 
-    @Autowired
+    //@Autowired
     private SerieRepository serieRepository; // Ajoutez cette injection
 
-    @Autowired
+    //@Autowired
     private EntityAdaptationService adaptationService; // Ajoutez cette injection
 
-    @Autowired
+    //@Autowired
     private MagicSerieRepository magicSerieRepository;
 
     @Override
     public void run(ApplicationArguments args) throws Exception {
+        // *** AJOUT : Vérification si l'initialisation automatique est désactivée ***
+        if (args.containsOption("skip-startup") ||
+                "false".equals(System.getProperty("app.startup.enabled", "false"))) {
+            logger.info("⏭️ Initialisation automatique désactivée");
+            return;
+        }
+
         logger.info("🚀 Initialisation de l'application MTG Cards...");
 
         // 1. Créer la série par défaut 2025
@@ -81,23 +90,29 @@ public class ApplicationStartupService implements ApplicationRunner {
         }
 
         // Créer une nouvelle MagicSerie
-        MagicSerie serie2025 = new MagicSerie();  // ← Utiliser MagicSerie au lieu de Serie
+        logger.info("🔧 DEBUG: Création MagicSerie...");
+        MagicSerie serie2025 = new MagicSerie();
 
-        // Créer la traduction US
+        logger.info("🔧 DEBUG: Création traduction US...");
         SerieTranslation translationUS = new SerieTranslation();
         translationUS.setName("2025");
         translationUS.setLocalization(Localization.USA);
         translationUS.setActive(true);
 
-        // Créer la traduction FR
+        logger.info("🔧 DEBUG: Création traduction FR...");
         SerieTranslation translationFR = new SerieTranslation();
         translationFR.setName("Année 2025");
         translationFR.setLocalization(Localization.FRANCE);
         translationFR.setActive(true);
 
-        // Assigner les traductions
+        logger.info("🔧 DEBUG: Attribution des traductions...");
         serie2025.setTranslation(Localization.USA, translationUS);
         serie2025.setTranslation(Localization.FRANCE, translationFR);
+
+        logger.info("🔧 DEBUG: Sauvegarde en cours...");
+
+        // Sauvegarder avec le repository approprié
+        //MagicSerie savedSerie = magicSerieRepository.save(serie2025);
 
         try {
             // Sauvegarder avec le repository approprié
@@ -116,6 +131,12 @@ public class ApplicationStartupService implements ApplicationRunner {
      */
     @Transactional
     protected void initializeEssentialSets(Serie defaultSerie) {
+
+        if (defaultSerie == null) {
+            logger.warn("⚠️ Aucune série par défaut disponible - Extensions non créées");
+            return;
+        }
+
         logger.info("📦 Initialisation des extensions essentielles avec série 2025...");
 
         // Extensions 2024-2025 prioritaires

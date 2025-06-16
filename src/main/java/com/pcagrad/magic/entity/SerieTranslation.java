@@ -1,6 +1,7 @@
 package com.pcagrad.magic.entity;
 
 import com.pcagrad.magic.util.Localization;
+import com.pcagrad.magic.util.LocalizationConverter;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -16,19 +17,27 @@ import java.util.UUID;
 @Inheritance(strategy = InheritanceType.JOINED)
 @DiscriminatorColumn(name = "discriminator")
 @DiscriminatorValue("mag")
-public class SerieTranslation  extends AbstractUuidEntity{
+public class SerieTranslation extends AbstractUuidEntity {
 
-    // *** CORRECTION : Force VARCHAR au lieu d'ENUM ***
-    @Enumerated(EnumType.STRING)
-    @Column(name = "locale", columnDefinition = "VARCHAR(5)")
+    @Id
+    @GeneratedValue
+    @Column(name = "id", updatable = false, nullable = false)
+    private UUID id;
+
+    // *** SOLUTION : Utiliser un converter personnalisé pour stocker les codes courts ***
+    @Convert(converter = LocalizationConverter.class)
+    @Column(name = "locale", length = 5)
     private Localization localization;
 
-    @ManyToOne(fetch = FetchType.EAGER, cascade = CascadeType.ALL)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "translatable_id")
     private Serie translatable;
 
-    @Column
+    @Column(name = "name")
     private String name;
 
-    @Column
+    @Column(name = "active")
     private boolean active;
 }
+
+// *** AJOUTEZ CETTE CLASSE CONVERTER - CRÉEZ UN FICHIER SÉPARÉ ***

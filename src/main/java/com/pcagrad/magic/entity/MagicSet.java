@@ -160,9 +160,16 @@ public class MagicSet extends CardSet {
         return "Extension " + code;
     }
 
+    // *** AMÉLIORATION : Méthode setName() corrigée ***
     public void setName(String name) {
         ensureTranslationExists(Localization.USA);
-        getTranslation(Localization.USA).setName(name);
+        CardSetTranslation translation = getTranslation(Localization.USA);
+
+        if (translation != null) {
+            translation.setName(name);
+            // *** CORRECTION : Mettre à jour aussi label_name ***
+            translation.setLabelName(name);
+        }
     }
 
     public String getType() {
@@ -194,6 +201,15 @@ public class MagicSet extends CardSet {
             CardSetTranslation translation = new CardSetTranslation();
             translation.setLocalization(localization);
             translation.setAvailable(true);
+
+            // *** CORRECTION : Définir le name et label_name ***
+            String defaultName = "Extension " + (code != null ? code : "Unknown");
+            translation.setName(defaultName);
+            translation.setLabelName(defaultName); // ← AJOUTÉ : Définir label_name
+
+            // Définir une date par défaut
+            translation.setReleaseDate(java.time.LocalDateTime.now());
+
             setTranslation(localization, translation);
         }
     }

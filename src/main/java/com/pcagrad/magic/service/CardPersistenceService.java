@@ -1,5 +1,6 @@
 package com.pcagrad.magic.service;
 
+import com.pcagrad.magic.entity.CardTranslation;
 import com.pcagrad.magic.entity.MagicCard;
 import com.pcagrad.magic.entity.MagicSet;
 import com.pcagrad.magic.model.MtgCard;
@@ -246,25 +247,38 @@ public class CardPersistenceService {
         }
     }
 
-    /**
-     * Crée une nouvelle entité carte - VERSION ADAPTÉE
-     */
     private MagicCard createCardEntityAdapted(MtgCard mtgCard, String setCode) {
         MagicCard cardEntity = new MagicCard();
-        cardEntity.setExternalId(mtgCard.id());
-        cardEntity.setSetCode(setCode);
+
+        // *** CORRECTION 1 : Génerer un UUID unique pour la carte ***
+        // Ne pas utiliser l'ID Scryfall tronqué qui crée des doublons
+        cardEntity.setId(UUID.randomUUID()); // Laisser Hibernate générer l'ID principal
+
+        // *** CORRECTION 2 : Stocker l'ID Scryfall complet dans un autre champ ou le hasher ***
+        String externalId = mtgCard.id();
+        if (externalId != null && externalId.length() > 20) {
+            // Créer un hash unique basé sur l'ID complet
+            externalId = Integer.toHexString(mtgCard.id().hashCode()).substring(0, Math.min(20, 8));
+        }
+        cardEntity.setExternalId(externalId);
+
+        cardEntity.setZPostExtension(setCode); // Définir le setCode
         updateCardEntityAdapted(cardEntity, mtgCard);
         return cardEntity;
     }
 
-    /**
-     * Met à jour une entité carte - VERSION ADAPTÉE
-     */
+
     private void updateCardEntityAdapted(MagicCard cardEntity, MtgCard mtgCard) {
-        // Données de base
-        cardEntity.setExternalId(mtgCard.id());
-        cardEntity.setName(mtgCard.name());
-        cardEntity.setSetCode(cardEntity.getSetCode()); // Garder le setCode existant
+        // S'assurer que l'ID externe est déjà défini dans createCardEntityAdapted
+
+        // *** CORRECTION 3 : Créer une traduction avec label_name ***
+        cardEntity.ensureTranslationExists(Localization.USA);
+        CardTranslation translation = cardEntity.getTranslation(Localization.USA);
+        if (translation != null) {
+            translation.setName(mtgCard.name());
+            translation.setLabelName(mtgCard.name()); // ← AJOUTER label_name
+            translation.setAvailable(true);
+        }
 
         // Numéro de carte
         if (mtgCard.number() != null) {
@@ -299,11 +313,10 @@ public class CardPersistenceService {
         cardEntity.setOriginalImageUrl(imageUrl);
 
         // Propriétés spécifiques à la nouvelle structure
-        cardEntity.setIsAffichable(true); // Par défaut affichable
-        cardEntity.setHasRecherche(true); // Par défaut recherchable
-        cardEntity.setCertifiable(false); // Par défaut non certifiable
+        cardEntity.setIsAffichable(true);
+        cardEntity.setHasRecherche(true);
+        cardEntity.setCertifiable(false);
     }
-
     /**
      * Met à jour les statistiques d'une extension - VERSION ADAPTÉE
      */

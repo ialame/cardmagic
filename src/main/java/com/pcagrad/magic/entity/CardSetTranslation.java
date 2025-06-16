@@ -1,6 +1,7 @@
 package com.pcagrad.magic.entity;
 
 import com.pcagrad.magic.util.Localization;
+import com.pcagrad.magic.util.LocalizationConverter;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -40,9 +41,8 @@ public class CardSetTranslation  extends AbstractUuidEntity{
 	@Column(name = "release_date")
 	private LocalDateTime releaseDate;
 
-	// *** CORRECTION : Force VARCHAR au lieu d'ENUM ***
-	@Enumerated(EnumType.STRING)
-	@Column(name = "locale", columnDefinition = "VARCHAR(5)")
+	@Convert(converter = LocalizationConverter.class)
+	@Column(name = "locale", length = 5)
 	private Localization localization;
 
 }
